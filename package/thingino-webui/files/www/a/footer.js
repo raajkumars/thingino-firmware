@@ -223,10 +223,18 @@
 
     const powerText = createElement("div");
     const poweredLink = document.createElement("a");
-    poweredLink.href = "https://thingino.com/";
-    poweredLink.textContent = "Thingino";
+    poweredLink.href = "https://qwickapps.com/qwickwatch";
+    poweredLink.textContent = "QwickWatch Edge OS";
     powerText.append("Powered by ");
     powerText.appendChild(poweredLink);
+
+    const attributionLink = document.createElement("a");
+    attributionLink.href = "https://github.com/themactep/thingino-firmware/wiki";
+    attributionLink.textContent = "Built on Thingino (open source)";
+    attributionLink.target = "_blank";
+    attributionLink.rel = "noreferrer noopener";
+    powerText.append(" · ");
+    powerText.appendChild(attributionLink);
 
     const buildInfo = createElement("div", "small", globalConfig.buildInfo);
 

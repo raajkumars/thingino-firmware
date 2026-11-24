@@ -8,7 +8,7 @@
       const gotify = data.gotify || {};
       $("#gotify_url").value = gotify.url || "";
       $("#gotify_token").value = gotify.token || "";
-      $("#gotify_title").value = gotify.title || "Thingino Camera";
+      $("#gotify_title").value = gotify.title || "QwickWatch Edge OS Camera";
       $("#gotify_message").value =
         gotify.message || "Motion detected at %Y-%m-%d %H:%M:%S";
       $("#gotify_extras").value = gotify.extras || "";

@@ -160,14 +160,14 @@
         menuClass: "dropdown-menu dropdown-menu-lg-end",
         items: [
           {
-            label: "About thingino",
-            href: "https://thingino.com/",
+            label: "QwickWatch Edge OS",
+            href: "https://qwickapps.com/qwickwatch",
             target: "_blank",
             rel: "noreferrer noopener",
             trackActive: false,
           },
           {
-            label: "Thingino Wiki",
+            label: "Built on Thingino (open source)",
             href: "https://github.com/themactep/thingino-firmware/wiki",
             target: "_blank",
             rel: "noreferrer noopener",
@@ -236,7 +236,7 @@
     ) {
       return document.body.dataset.navLabel;
     }
-    if (!title) return "thingino";
+    if (!title) return "QwickWatch Edge OS";
     const parts = title
       .split(/·|-|—/)
       .map((part) => part.trim())
@@ -247,7 +247,7 @@
     if (parts.length === 1) {
       return parts[0];
     }
-    return "thingino";
+    return "QwickWatch Edge OS";
   }
 
   function createAnchor(item, defaultClass) {
@@ -331,8 +331,8 @@
       typeof globalConfig.brandHref === "string" ? globalConfig.brandHref : "/";
 
     const brandLogo = document.createElement("img");
-    brandLogo.alt = globalConfig.brandLogoAlt || "Thingino logo";
-    brandLogo.width = 150;
+    brandLogo.alt = globalConfig.brandLogoAlt || "QwickWatch Edge OS logo";
+    brandLogo.height = 40;
     brandLogo.src = globalConfig.brandLogo || "/a/logo.svg";
     brand.appendChild(brandLogo);
 

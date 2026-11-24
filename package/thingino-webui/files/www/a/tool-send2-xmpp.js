@@ -8,7 +8,7 @@
       const xmpp = data.xmpp || {};
       $("#xmpp_jid").value = xmpp.jid || "";
       $("#xmpp_password").value = xmpp.password || "";
-      $("#xmpp_resource").value = xmpp.resource || "thingino";
+      $("#xmpp_resource").value = xmpp.resource || "qwickwatch";
       $("#xmpp_bosh_url").value = xmpp.bosh_url || "";
       $("#xmpp_recipient").value = xmpp.recipient || "";
       $("#xmpp_send_photo").checked =
@@ -22,7 +22,7 @@
         xmpp: {
           jid: $("#xmpp_jid").value.trim(),
           password: $("#xmpp_password").value.trim(),
-          resource: $("#xmpp_resource").value.trim() || "thingino",
+          resource: $("#xmpp_resource").value.trim() || "qwickwatch",
           bosh_url: $("#xmpp_bosh_url").value.trim(),
           recipient: $("#xmpp_recipient").value.trim(),
           send_photo: $("#xmpp_send_photo").checked,

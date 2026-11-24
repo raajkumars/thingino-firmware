@@ -18,7 +18,7 @@
   if (window.opener && typeof window.opener.postMessage === "function") {
     try {
       window.opener.postMessage(payload, origin);
-      notifyStatus("Authorization code sent back to Thingino.");
+      notifyStatus("Authorization code sent back to QwickWatch Edge OS.");
       setTimeout(() => window.close(), 1200);
       return;
     } catch (err) {
@@ -28,7 +28,7 @@
     }
   } else {
     notifyStatus(
-      'No parent window detected. Return to Thingino and paste the "code" parameter manually.',
+      'No parent window detected. Return to QwickWatch Edge OS and paste the "code" parameter manually.',
     );
   }
 })();
