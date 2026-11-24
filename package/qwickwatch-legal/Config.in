@@ -1,0 +1,9 @@
+config BR2_PACKAGE_QWICKWATCH_LEGAL
+	bool "QwickWatch legal pages (Terms of Service / Privacy Policy)"
+	depends on BR2_PACKAGE_THINGINO_WEBUI
+	default y
+	help
+	  Adds short, on-device Terms of Service and Privacy Policy summary pages
+	  to the WebUI Help menu, with links to the full QwickApps legal
+	  documents, plus a persistent qwickapps.com footer link on every
+	  WebUI page.

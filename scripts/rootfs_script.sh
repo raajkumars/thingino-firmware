@@ -97,17 +97,17 @@ tmpfile=$(mktemp)
 sed 's/^/BUILDROOT_/' $FILE >$tmpfile
 
 # Add Thingino entries
-echo "NAME=Thingino
+echo "NAME=\"QwickWatch Edge OS\"
 ID=thingino
 VERSION=\"2 (Figata)\"
 VERSION_ID=1
 VERSION_CODENAME=figata
-PRETTY_NAME=\"Thingino 2 (Figata)\"
+PRETTY_NAME=\"QwickWatch Edge OS (based on Thingino)\"
 ID_LIKE=buildroot
 CPE_NAME=\"cpe:/o:thinginoproject:thingino:1\"
 LOGO=thingino-logo-icon
 ANSI_COLOR=\"1;34\"
-HOME_URL=\"https://thingino.com/\"
+HOME_URL=\"https://qwickapps.com/qwickwatch\"
 ARCHITECTURE=${ARCHITECTURE}
 LIBC=${LIBC}
 TOOLCHAIN=${LIBC}
