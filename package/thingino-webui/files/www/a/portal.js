@@ -123,7 +123,11 @@
       var n = await api("/x/json-config-network.cgi");
       store.network = n;
       if (n.hostname) $("deviceName").value = n.hostname.replace(/\.(local|lan)$/i, "");
-      var ip = (n.interfaces && n.interfaces.eth0 && n.interfaces.eth0.address) || "";
+      var ifaces = (n.interfaces && [n.interfaces.eth0, n.interfaces.wlan0, n.interfaces.usb0]) || [];
+      var ip = "";
+      for (var i = 0; i < ifaces.length; i++) {
+        if (ifaces[i] && ifaces[i].address) { ip = ifaces[i].address; break; }
+      }
       var meta = $("deviceMeta");
       if (meta) { meta.dataset.ip = ip; meta.textContent = "online · " + (ip || "IP not configured"); }
       return n;
@@ -300,50 +304,94 @@
     load: async function () {
       var n = store.network || await api("/x/json-config-network.cgi");
       store.network = n;
+      var eth = (n.interfaces && n.interfaces.eth0) || {};
+      var wlan = (n.interfaces && n.interfaces.wlan0) || {};
+      var active = bool(eth.link_up) ? eth : bool(wlan.link_up) ? wlan : (eth.address ? eth : wlan);
+      var address = eth.address || wlan.address || "";
+
       $("netHostname").textContent = n.hostname || "—";
       $("netSsid").value = (n.wifi && n.wifi.ssid) || "";
-      var eth = (n.interfaces && (n.interfaces.eth0 || n.interfaces.eth)) || {};
+      if ($("netWifiPassword")) $("netWifiPassword").value = "";
       $("netDhcp").checked = eth.dhcp == null ? true : bool(eth.dhcp);
-      $("netAddress").textContent = eth.address || (n.wifi && n.wifi.address) || "—";
-      $("netGateway").textContent = eth.gateway || "—";
-      $("netWifiEnabled").checked = bool(n.wifi_ap && n.wifi_ap.enabled) || !!((n.wifi && n.wifi.ssid));
-      $("netStatus").textContent = $("netAddress").textContent !== "—" ? "Configured" : "Not configured";
-      $("netRtsp").textContent = "rtsp://" + (eth.address || location.hostname) + ":554/ch0";
+      $("netAddress").textContent = address || "—";
+      $("netGateway").textContent = active.gateway || "—";
+      $("netWifiEnabled").checked = bool(n.wifi_ap && n.wifi_ap.enabled);
+      $("netStatus").textContent = bool(active.link_up)
+        ? "Link up · " + (bool(active.dhcp) ? "DHCP" : "static")
+        : address ? "Configured · link down" : "Not configured";
+      $("netRtsp").textContent = "rtsp://" + (address || location.hostname) + ":554/ch0";
 
       try {
         var w = await api("/x/json-config-webui.cgi");
         store.webui = w;
         $("netRange").value = w.auth_bypass_ips || "";
-      } catch (e) { /* optional build */
-
+      } catch (e) {
+        $("netRange").disabled = true;
+        say("netNote", "Web UI access restrictions are not available in this build.", true);
       }
 
       try {
         var wg = await api("/x/json-config-wireguard.cgi");
         store.wg = wg;
-        $("netVpn").checked = bool(wg.enabled || (wg.wireguard && wg.wireguard.enabled));
-      } catch (e) { $("netVpn").disabled = true; }
+        $("netVpn").checked = bool(wg.enabled);
+        if (wg.wg_supported === false) {
+          $("netVpn").disabled = true;
+          say("netNote", "WireGuard tooling is not installed in this build.");
+        }
+      } catch (e) {
+        $("netVpn").disabled = true;
+      }
     },
     save: async function () {
       var n = JSON.parse(JSON.stringify(store.network || {}));
+      if (!n.hostname) throw new Error("Network settings did not load; reload the page.");
+      if (!(n.dns && (n.dns.primary || n.dns.secondary))) {
+        throw new Error("No DNS server is configured on this camera; set one in the stock Network page first.");
+      }
+
       n.wifi = n.wifi || {};
-      n.wifi.ssid = $("netSsid").value.trim();
+      var ssid = $("netSsid").value.trim();
+      var pass = $("netWifiPassword") ? $("netWifiPassword").value : "";
+      var previousSsid = (store.network.wifi && store.network.wifi.ssid) || "";
+      if (ssid && ssid !== previousSsid && !pass) {
+        throw new Error("Enter the Wi-Fi password for the new network before saving.");
+      }
+      n.wifi.ssid = ssid;
+      n.wifi.password = pass;
+      if (n.wifi.bssid == null) n.wifi.bssid = "";
+
       n.interfaces = n.interfaces || {};
-      var eth = n.interfaces.eth0 || n.interfaces.eth || {};
+      var eth = n.interfaces.eth0 || {};
       eth.dhcp = $("netDhcp").checked;
-      if (n.interfaces.eth0) n.interfaces.eth0 = eth; else if (n.interfaces.eth) n.interfaces.eth = eth;
+      n.interfaces.eth0 = eth;
       n.wifi_ap = n.wifi_ap || {};
       n.wifi_ap.enabled = $("netWifiEnabled").checked;
+
       await api("/x/json-config-network.cgi", { method: "POST", body: n });
-      if ($("netRange").value.trim() && $("netRange").value.trim() !== (store.webui && store.webui.auth_bypass_ips)) {
-        var w = JSON.parse(JSON.stringify(store.webui || {}));
-        w.theme = w.theme || "auto";
-        w.paranoid = w.paranoid == null ? false : w.paranoid;
-        w.track_focus = w.track_focus == null ? true : w.track_focus;
-        w.focus_timeout = w.focus_timeout || 0;
-        w.auth_bypass_ips = $("netRange").value.trim();
-        await api("/x/json-config-webui.cgi", { method: "POST", body: w });
-        store.webui = w;
+      store.network.wifi = store.network.wifi || {};
+      store.network.wifi.ssid = ssid;
+      if (pass) $("netWifiPassword").value = "";
+
+      if (store.webui) {
+        var w = JSON.parse(JSON.stringify(store.webui));
+        var range = $("netRange").value.trim();
+        if (range !== (store.webui.auth_bypass_ips || "")) {
+          w.theme = ["light", "dark", "auto"].indexOf(w.theme) >= 0 ? w.theme : "auto";
+          w.paranoid = bool(w.paranoid);
+          w.track_focus = w.track_focus == null ? false : bool(w.track_focus);
+          w.focus_timeout = Number(w.focus_timeout) || 0;
+          w.auth_bypass_ips = range;
+          await api("/x/json-config-webui.cgi", { method: "POST", body: w });
+          store.webui = w;
+        }
+      }
+
+      if (store.wg && !$("netVpn").disabled) {
+        var wg = JSON.parse(JSON.stringify(store.wg));
+        wg.enabled = $("netVpn").checked;
+        delete wg.action;
+        await api("/x/json-config-wireguard.cgi", { method: "POST", body: wg });
+        store.wg.enabled = wg.enabled;
       }
       return "Network settings saved (a reboot may be required).";
     },
@@ -351,48 +399,84 @@
 
   loaders.notify = {
     load: async function () {
+      var notes = [];
       try {
-        var d = await api("/x/json-send2.cgi");
-        store.send2 = d;
-        var motion = (d.motion || {});
+        var d = await api("/x/json-config-send2.cgi");
+        store.notifyConfig = d;
+        var motion = d.motion || {};
         document.querySelectorAll("#notifyServices [data-service]").forEach(function (row) {
-          var key = row.dataset.service;
-          var found = null;
-          Object.keys(motion).forEach(function (k) { if (k.toLowerCase() === key) found = k; });
           var input = row.querySelector("input");
-          input.disabled = !found;
-          if (found) input.checked = bool(motion[found]);
-          row.dataset.realKey = found || "";
+          var key = "send2" + row.dataset.service;
+          input.checked = bool(motion[key]);
+          input.disabled = false;
+          row.dataset.realKey = key;
         });
-        var mqtt = d.mqtt || {};
-        $("notifyMqtt").checked = bool(mqtt.enabled);
+        var mqtt = (d.config && d.config.mqtt) || {};
+        $("notifyMqtt").checked = bool(motion.send2mqtt);
         $("mqttHost").value = mqtt.host || "";
         $("mqttTopic").value = mqtt.topic || "";
-      } catch (e) { markUnavailable("syslogNote", "Send2 config"); }
+        if (d.meta && d.meta.mqtt_available === false) {
+          $("notifyMqtt").disabled = true;
+          notes.push("MQTT publisher is not installed in this build.");
+        }
+      } catch (e) {
+        document.querySelectorAll("#notifyServices input").forEach(function (input) {
+          input.disabled = true;
+        });
+        $("notifyMqtt").disabled = true;
+        notes.push("Send2 notification config is not available in this build.");
+      }
+
       try {
         var ha = await api("/x/json-config-ha.cgi");
         store.ha = ha;
         $("notifyHa").checked = bool(ha.enabled);
-      } catch (e) { $("notifyHa").disabled = true; }
+      } catch (e) {
+        $("notifyHa").disabled = true;
+        notes.push("Home Assistant integration is not installed in this build.");
+      }
+      say("notifyNote", notes.join(" "), notes.length > 0);
     },
     save: async function () {
-      var d = JSON.parse(JSON.stringify(store.send2 || {}));
-      d.motion = d.motion || {};
-      document.querySelectorAll("#notifyServices [data-service]").forEach(function (row) {
-        var k = row.dataset.realKey;
-        if (k) d.motion[k] = row.querySelector("input").checked;
-      });
-      d.mqtt = d.mqtt || {};
-      d.mqtt.enabled = $("notifyMqtt").checked;
-      if ($("mqttHost").value.trim()) d.mqtt.host = $("mqttHost").value.trim();
-      if ($("mqttTopic").value.trim()) d.mqtt.topic = $("mqttTopic").value.trim();
-      await api("/x/json-send2.cgi", { method: "POST", body: d });
-      if (store.ha) {
+      if (!store.notifyConfig) throw new Error("Notification settings did not load; reload the page.");
+
+      var haPayload = null;
+      if (store.ha && !$("notifyHa").disabled) {
         var ha = JSON.parse(JSON.stringify(store.ha));
+        var enabling = $("notifyHa").checked && !bool(ha.enabled);
+        if (enabling && !(ha.mqtt && ha.mqtt.host)) {
+          throw new Error("Set the Home Assistant MQTT broker on the Home Assistant page first.");
+        }
         ha.enabled = $("notifyHa").checked;
-        await api("/x/json-config-ha.cgi", { method: "POST", body: ha });
+        haPayload = ha;
       }
-      return "Notification settings saved.";
+
+      var d = JSON.parse(JSON.stringify(store.notifyConfig));
+      var motion = d.motion || {};
+      document.querySelectorAll("#notifyServices [data-service]").forEach(function (row) {
+        var input = row.querySelector("input");
+        if (!input.disabled) motion[row.dataset.realKey] = input.checked;
+      });
+      if (!$("notifyMqtt").disabled) motion.send2mqtt = $("notifyMqtt").checked;
+
+      var cfg = JSON.parse(JSON.stringify(d.config || {}));
+      cfg.mqtt = cfg.mqtt || {};
+      cfg.mqtt.host = $("mqttHost").value.trim();
+      cfg.mqtt.topic = $("mqttTopic").value.trim();
+      await api("/x/json-config-send2.cgi", {
+        method: "POST",
+        body: { config: cfg, motion: motion },
+      });
+      store.notifyConfig.config = cfg;
+      store.notifyConfig.motion = motion;
+
+      var saved = ["notification destinations"];
+      if (haPayload) {
+        await api("/x/json-config-ha.cgi", { method: "POST", body: haPayload });
+        store.ha = haPayload;
+        saved.push("Home Assistant");
+      }
+      return "Saved " + saved.join(" and ") + ".";
     },
   };
 
@@ -533,21 +617,30 @@
     btn.disabled = true;
     try {
       var msg = await loader.save();
-      var note = $("saveNote") || $("picNote") || $("syslogNote");
+      var note = $("saveNote") || $("picNote") || $("syslogNote") || $("netNote") || $("notifyNote");
       if (note) { note.textContent = msg; note.className = "okmsg"; }
       setTimeout(function () { if (note) note.textContent = ""; }, 5000);
     } catch (e) {
-      var n = $("saveNote") || $("picNote") || $("syslogNote");
+      var n = $("saveNote") || $("picNote") || $("syslogNote") || $("netNote") || $("notifyNote");
       if (n) { n.textContent = "Save failed: " + e.message; n.className = "err"; }
       else alert("Save failed: " + e.message);
     } finally { btn.disabled = false; }
   });
 
   $("netUseCurrent").addEventListener("click", function () {
-    var parts = location.hostname.split(".");
-    $("netRange").value = parts.length >= 4
-      ? parts.slice(0, 3).join(".") + ".0/24"
-      : "192.168.1.0/24";
+    var n = store.network || {};
+    var ifaces = (n.interfaces && [n.interfaces.eth0, n.interfaces.wlan0, n.interfaces.usb0]) || [];
+    var ip = "";
+    for (var i = 0; i < ifaces.length; i++) {
+      if (ifaces[i] && ifaces[i].address) { ip = ifaces[i].address; break; }
+    }
+    var m = ip.match(/^(\d+\.\d+\.\d+)\.\d+$/);
+    if (m) {
+      $("netRange").value = m[1] + ".0/24";
+      say("netNote", "");
+    } else {
+      say("netNote", "Camera has no IPv4 address yet; enter the allowed range manually.", true);
+    }
   });
 
   async function wgAction(action) {

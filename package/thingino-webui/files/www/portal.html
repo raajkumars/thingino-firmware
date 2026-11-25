@@ -236,15 +236,17 @@
       <div class="tabpanel" id="tab-netaccess">
         <div class="card">
           <h2>Wi-Fi</h2>
-          <div class="field row-inline"><label style="flex:1;margin:0;">Wi-Fi enabled</label><label class="toggle"><input type="checkbox" id="netWifiEnabled"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field row-inline"><label style="flex:1;margin:0;">Wi-Fi hotspot (AP mode)</label><label class="toggle"><input type="checkbox" id="netWifiEnabled"><span class="track"></span><span class="thumb"></span></label></div>
           <div class="field row-inline" style="margin-top:10px;"><label style="flex:1;margin:0;">Automatic IP (DHCP)</label><label class="toggle"><input type="checkbox" id="netDhcp"><span class="track"></span><span class="thumb"></span></label></div>
           <div class="field" style="margin-top:10px;"><label>Network</label><input type="text" id="netSsid" placeholder="Wi-Fi SSID"></div>
+          <div class="field"><label>Wi-Fi password</label><input type="password" id="netWifiPassword" placeholder="Leave blank to keep the saved password" autocomplete="new-password"></div>
           <table class="kv" style="margin-top:10px;">
             <tr><td>Hostname</td><td class="v" id="netHostname">—</td></tr>
             <tr><td>Status</td><td class="v" id="netStatus">—</td></tr>
             <tr><td>Local address</td><td class="v" id="netAddress">—</td></tr>
             <tr><td>Gateway</td><td class="v" id="netGateway">—</td></tr>
           </table>
+          <div class="status-line" id="netNote"></div>
         </div>
         <div class="grid2">
           <div class="card">
@@ -291,6 +293,8 @@
             <div class="field"><label>MQTT broker</label><input type="text" id="mqttHost" placeholder="192.168.1.10"></div>
             <div class="field"><label>MQTT topic</label><input type="text" id="mqttTopic" placeholder="thingino/events"></div>
           </div>
+          <div class="sect-note">The Home Assistant broker and entity list are set on the stock Home Assistant page.</div>
+          <div class="status-line" id="notifyNote"></div>
         </div>
       </div>
 
