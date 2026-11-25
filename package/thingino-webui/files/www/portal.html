@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QwickWatch Edge OS — Portal</title>
+<link rel="icon" type="image/svg+xml" href="/a/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/a/portal.css">
+</head>
+<body data-hermes-widget="qwickwatch-edge-os-portal">
+
+<div class="app-shell">
+  <!-- ================= SIDEBAR ================= -->
+  <nav class="sidebar" id="sidebar">
+    <div class="brand">
+      <img class="qicon" src="assets/qwickapps-q-logo.svg" alt="QwickApps" width="30" height="30">
+      <div class="brand-text"><b>wick Watch</b><span>Edge OS</span></div>
+    </div>
+
+    <div class="momo-badge">
+      <img src="assets/momo-64.png" alt="Momo">
+      <div class="txt"><b>Momo</b><span>listening on this cam</span></div>
+      <div class="pulse"></div>
+    </div>
+
+    <div class="device-card">
+      <div class="device-card__label">Device name</div>
+      <div class="device-card__name"><input id="deviceName" value="camera" onchange="renameDevice()" aria-label="Device name"></div>
+      <div class="device-card__meta"><span class="dot"></span> <span id="deviceMeta">online · reading network…</span></div>
+    </div>
+
+    <button class="navitem active" data-tab="live" onclick="showTab('live',this)"><span class="ic">▶</span> Live &amp; Preview</button>
+
+    <div class="navgroup__label">QwickWatch</div>
+    <button class="navitem" data-tab="zones" onclick="showTab('zones',this)"><span class="ic">◇</span> Zone &amp; AI Rules</button>
+    <button class="navitem" data-tab="voice" onclick="showTab('voice',this)"><span class="ic">◉</span> Voice (Momo)</button>
+    <button class="navitem" data-tab="detection" onclick="showTab('detection',this)"><span class="ic">◈</span> Detection</button>
+    <button class="navitem" data-tab="firmware" onclick="showTab('firmware',this)"><span class="ic">⇪</span> Firmware / OTA</button>
+    <button class="navitem" data-tab="storage" onclick="showTab('storage',this)"><span class="ic">▤</span> Storage &amp; Backup</button>
+
+    <div class="navgroup__label">Camera Settings</div>
+    <button class="navitem" data-tab="picture" onclick="showTab('picture',this)"><span class="ic">🌙</span> Picture &amp; Night Vision</button>
+    <button class="navitem" data-tab="audio" onclick="showTab('audio',this)"><span class="ic">🔊</span> Audio</button>
+    <button class="navitem" data-tab="netaccess" onclick="showTab('netaccess',this)"><span class="ic">📶</span> Network &amp; Access</button>
+    <button class="navitem" data-tab="notify" onclick="showTab('notify',this)"><span class="ic">🔔</span> Notifications</button>
+    <button class="navitem" data-tab="account" onclick="showTab('account',this)"><span class="ic">👤</span> Account</button>
+
+    <details class="navgroup-d" id="advancedGroup">
+      <summary><span class="ic">⚠</span> Advanced <span class="chev">▸</span></summary>
+      <div class="navsub">
+        <button class="navitem" data-tab="info" onclick="showTab('info',this)">System info &amp; logs</button>
+        <button class="navitem" data-tab="syslog" onclick="showTab('syslog',this)">Remote logging</button>
+        <button class="navitem" data-tab="filemanager" onclick="showTab('filemanager',this)">File manager</button>
+        <button class="navitem" data-tab="nettest" onclick="showTab('nettest',this)">Network test</button>
+        <button class="navitem" data-tab="streamer" onclick="showTab('streamer',this)">Streamer internals (Prudynt-T)</button>
+        <button class="navitem" data-tab="wgkeys" onclick="showTab('wgkeys',this)">VPN encryption keys</button>
+        <button class="navitem" data-tab="advanced" onclick="showTab('advanced',this)">SSH, factory reset &amp; danger zone</button>
+      </div>
+    </details>
+  </nav>
+
+  <!-- ================= MAIN ================= -->
+  <div class="main">
+    <div class="topbar">
+      <div class="zone-badge" id="zoneBadge">🏠 Family / Indoor</div>
+      <span class="badge ok" id="onlineBadge">● online</span>
+      <div class="spacer"></div>
+      <button class="pill-btn" id="rebootBtn">Reboot</button>
+      <button class="pill-btn primary" id="saveBtn">Save changes</button>
+    </div>
+    <div id="saveNote" class="status-line" style="position:absolute; right:28px; top:62px; z-index:30; max-width:420px; text-align:right;"></div>
+
+    <div class="content" id="content">
+
+      <!-- LIVE -->
+      <div class="tabpanel active" id="tab-live">
+        <div class="card">
+          <h2>Live preview</h2>
+          <div class="caption" id="liveCaption">Main stream · connect</div>
+          <div class="live-preview">
+            <svg id="camPlaceholder" width="54" height="54" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><path d="M3 7a2 2 0 0 1 2-2h3l1-2h6l1 2h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            <img id="liveStream" class="stream-img" style="display:none" alt="Live camera stream">
+            <span class="badge ok" style="position:absolute;top:12px;left:12px;">● LIVE</span>
+            <span class="ts num" id="liveClock">00:00:00</span>
+          </div>
+        </div>
+        <div class="grid3">
+          <div class="card">
+            <h3>Night mode</h3>
+            <div class="seg" style="margin-top:10px;" id="liveNightSeg">
+              <button class="active" data-value="auto">Auto</button><button data-value="night">On</button><button data-value="day">Off</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>IR brightness</h3>
+            <input class="slider" id="liveIr" type="range" min="0" max="100" value="70" style="margin-top:16px;">
+          </div>
+          <div class="card">
+            <h3>Motion sensitivity</h3>
+            <input class="slider" id="liveMotion" type="range" min="0" max="100" value="55" style="margin-top:16px;">
+          </div>
+        </div>
+        <div class="card">
+          <h3>Health</h3>
+          <table class="kv">
+            <tr><td>Uptime</td><td class="v" id="healthUptime">—</td></tr>
+            <tr><td>CPU temp</td><td class="v" id="healthTemp">—</td></tr>
+            <tr><td>Free RAM</td><td class="v" id="healthRam">—</td></tr>
+            <tr><td>Wi-Fi RSSI</td><td class="v" id="healthRssi">—</td></tr>
+          </table>
+          <div class="status-line" id="healthNote">Live values from on-device health endpoints.</div>
+        </div>
+      </div>
+
+      <!-- ZONES — forward-looking, explicitly UI-only -->
+      <div class="tabpanel" id="tab-zones">
+        <div class="card">
+          <div class="badge warn placeholder-note">Coming soon — not yet connected to a backend</div>
+          <h2>Zone templates</h2>
+          <div class="caption">UI preview of the planned QwickWatch zone model. Nothing here is saved to this camera.</div>
+          <div class="grid3">
+            <div class="card" style="background:var(--surf2);"><h3>🏠 Family / Indoor</h3><p class="caption">Open Q&amp;A, pet &amp; emergency watch</p><button class="pill-btn primary" style="margin-top:8px;" disabled>Apply</button></div>
+            <div class="card" style="background:var(--surf2);"><h3>💼 Personal / Office</h3><p class="caption">Free chat, no household restrictions</p><button class="pill-btn" style="margin-top:8px;" disabled>Apply</button></div>
+            <div class="card" style="background:var(--surf2);"><h3>☂ Outdoor</h3><p class="caption">Logging-only v1, no act-on-command</p><button class="pill-btn" style="margin-top:8px;" disabled>Apply</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Allow-list for this camera</h3>
+          <div id="allowChips">
+            <span class="chip">general Q&amp;A <span class="x">✕</span></span>
+            <span class="chip">pet activity alerts <span class="x">✕</span></span>
+            <span class="chip">emergency escalation <span class="x">✕</span></span>
+          </div>
+          <div class="sect-note" style="margin-top:10px;">Illustrative only — no zone engine exists on this device yet.</div>
+        </div>
+      </div>
+
+      <!-- VOICE / MOMO — forward-looking, explicitly UI-only -->
+      <div class="tabpanel" id="tab-voice">
+        <div class="card">
+          <div class="badge warn placeholder-note">Coming soon — not yet connected to a backend</div>
+          <div class="momo-badge" style="margin-bottom:16px;"><img src="assets/momo-64.png" alt="Momo"><div class="txt"><b>Momo agent</b><span>not yet installed on this camera</span></div><div class="pulse"></div></div>
+          <h2>Wake word</h2>
+          <div class="field"><input type="text" value="Hi Momo" disabled></div>
+          <h3 style="margin-top:4px;">Wake sensitivity</h3>
+          <input class="slider" type="range" min="0" max="100" value="60" disabled>
+          <div class="sect-note">Illustrative only. Audio transport is planned as a dedicated TLS WebSocket to a Momo Agent Gateway, not MQTT. No agent process ships in this firmware.</div>
+        </div>
+      </div>
+
+      <!-- DETECTION — forward-looking, explicitly UI-only -->
+      <div class="tabpanel" id="tab-detection">
+        <div class="card">
+          <div class="badge warn placeholder-note">Coming soon — not yet connected to a backend</div>
+          <h2>Detection split</h2>
+          <table class="kv">
+            <tr><td>On-device (edge)</td><td class="v">Motion · common sound patterns · wake word</td></tr>
+            <tr><td>QwickWatch Service (cloud)</td><td class="v">Person / Pet / Package / Vehicle classification</td></tr>
+          </table>
+          <div class="sect-note">Planned architecture only — the on-device items above are not enabled by this page.</div>
+        </div>
+      </div>
+
+      <!-- FIRMWARE / OTA — real version info only, no fake controls -->
+      <div class="tabpanel" id="tab-firmware">
+        <div class="card">
+          <h2>Firmware</h2>
+          <table class="kv">
+            <tr><td>Current version</td><td class="v" id="fwVersion">reading…</td></tr>
+            <tr><td>Build / branch</td><td class="v" id="fwBuild">reading…</td></tr>
+            <tr><td>Kernel</td><td class="v" id="fwKernel">reading…</td></tr>
+            <tr><td>Health handshake</td><td class="v"><span class="badge ok">on-device</span></td></tr>
+          </table>
+          <div class="sect-note">This firmware exposes no automatic update or rollback CGI. Upgrade tools, when compiled in, live on the real <a href="/tool-upgrade.html">firmware tools page</a>.</div>
+        </div>
+      </div>
+
+      <!-- STORAGE — real on-device SD info; no fake recorder toggles -->
+      <div class="tabpanel" id="tab-storage">
+        <div class="card">
+          <h2>SD card &amp; recording</h2>
+          <table class="kv">
+            <tr><td>Card</td><td class="v" id="sdCard">checking…</td></tr>
+            <tr><td>Capacity</td><td class="v" id="sdCapacity">—</td></tr>
+            <tr><td>Mountpoint</td><td class="v" id="sdMount">—</td></tr>
+            <tr><td>Status</td><td class="v" id="sdStatus">—</td></tr>
+          </table>
+          <div class="mini-actions"><a class="pill-btn" href="/tool-sdcard.html">Open SD card tools</a></div>
+        </div>
+        <div class="card">
+          <h3>Recording</h3>
+          <div class="sect-note">No recorder/timelapse configuration endpoint is exposed by this firmware, so no toggle is shown here. Stream recording settings belong to the streamer pages under Advanced → Streamer internals.</div>
+          <div class="mini-actions"><a class="pill-btn" href="/tool-file-manager.html">File manager</a></div>
+        </div>
+      </div>
+
+      <!-- PICTURE & NIGHT VISION — real daynight + GPIO + privacy backends -->
+      <div class="tabpanel" id="tab-picture">
+        <div class="card">
+          <h2>Night mode</h2>
+          <div class="caption">When to switch between color and infrared black-and-white.</div>
+          <div class="seg" style="max-width:280px;" id="picNightSeg"><button class="active" data-value="auto">Auto</button><button data-value="day">Day</button><button data-value="night">Night</button></div>
+          <div class="field" style="margin-top:14px;"><label>Switch sensitivity <span class="num" id="picThreshVal">40</span></label><input class="slider" id="picThreshold" type="range" min="0" max="100" value="40"></div>
+          <div class="field row-inline" style="margin-top:4px;"><label style="flex:1;margin:0;">Smooth transition at dusk/dawn<span class="hint" style="display:block;">Fades gradually instead of snapping, so motion alerts stay calm</span></label><label class="toggle"><input type="checkbox" id="picDusk"><span class="track"></span><span class="thumb"></span></label></div>
+        </div>
+        <div class="grid2">
+          <div class="card">
+            <h3>Infrared light</h3>
+            <div class="field"><label>Brightness</label><input class="slider" id="picIr" type="range" min="0" max="100" value="70"></div>
+            <div class="field"><label>IR wavelength</label><select id="picIrBand"><option value="ir850">850 nm (brighter, visible red glow)</option><option value="ir940">940 nm (dimmer, invisible)</option><option value="off">Off</option></select></div>
+          </div>
+          <div class="card">
+            <h3>Status light</h3>
+            <div class="field"><label>Color when active</label><select id="picStatusLed"><option value="off">Off</option><option value="white">White</option><option value="blue">Blue</option><option value="green">Green</option><option value="red">Red</option><option value="violet">Violet</option></select></div>
+            <div class="field row-inline"><label style="flex:1;margin:0;">Blank the picture (privacy mode)</label><label class="toggle"><input type="checkbox" id="picPrivacy"><span class="track"></span><span class="thumb"></span></label></div>
+          </div>
+        </div>
+        <div class="sect-note" id="picNote">Values are read from the on-device day/night, GPIO and privacy config endpoints.</div>
+      </div>
+
+      <!-- AUDIO — real speaker/mic config from send2 backend -->
+      <div class="tabpanel" id="tab-audio">
+        <div class="card">
+          <h2>Audio</h2>
+          <div class="grid2">
+            <div class="field"><label>Microphone</label><input class="slider" id="audioMic" type="range" min="0" max="100" value="70"></div>
+            <div class="field"><label>Speaker</label><input class="slider" id="audioSpeaker" type="range" min="0" max="100" value="65"></div>
+          </div>
+          <div class="sect-note">Microphone and speaker values come from the on-device notification/audio config. Some builds expose speaker volume only.</div>
+        </div>
+      </div>
+
+      <!-- NETWORK & ACCESS — real network + wireguard + stream info -->
+      <div class="tabpanel" id="tab-netaccess">
+        <div class="card">
+          <h2>Wi-Fi</h2>
+          <div class="field row-inline"><label style="flex:1;margin:0;">Wi-Fi enabled</label><label class="toggle"><input type="checkbox" id="netWifiEnabled"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field row-inline" style="margin-top:10px;"><label style="flex:1;margin:0;">Automatic IP (DHCP)</label><label class="toggle"><input type="checkbox" id="netDhcp"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field" style="margin-top:10px;"><label>Network</label><input type="text" id="netSsid" placeholder="Wi-Fi SSID"></div>
+          <table class="kv" style="margin-top:10px;">
+            <tr><td>Hostname</td><td class="v" id="netHostname">—</td></tr>
+            <tr><td>Status</td><td class="v" id="netStatus">—</td></tr>
+            <tr><td>Local address</td><td class="v" id="netAddress">—</td></tr>
+            <tr><td>Gateway</td><td class="v" id="netGateway">—</td></tr>
+          </table>
+        </div>
+        <div class="grid2">
+          <div class="card">
+            <h3>Remote viewing app access</h3>
+            <div class="caption">Stream endpoints served by this camera's streamer.</div>
+            <table class="kv"><tr><td>Stream address</td><td class="v" id="netRtsp">—</td></tr></table>
+            <div class="mini-actions"><a class="pill-btn" href="/preview.html">Open preview</a></div>
+          </div>
+          <div class="card">
+            <h3>Remote access from anywhere (VPN)</h3>
+            <div class="caption">WireGuard tunnel on this camera, if this build includes it.</div>
+            <div class="field row-inline"><label style="flex:1;margin:0;">Enabled</label><label class="toggle"><input type="checkbox" id="netVpn"><span class="track"></span><span class="thumb"></span></label></div>
+            <div class="sect-note">Encryption keys live under Advanced → VPN encryption keys.</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Who can open this camera's settings</h3>
+          <div class="field"><label>Allowed network range</label><input type="text" id="netRange" placeholder="192.168.1.0/24"></div>
+          <button class="pill-btn" id="netUseCurrent">Use my current network</button>
+          <div class="sect-note">Web UI access restrictions are configured by the firmware's HTTP auth bypass list; this field edits that real setting.</div>
+        </div>
+      </div>
+
+      <!-- NOTIFICATIONS — real Send2 + MQTT + HA backends -->
+      <div class="tabpanel" id="tab-notify">
+        <div class="card">
+          <h2>Where alerts get sent</h2>
+          <div class="caption">Destinations configured on this camera via the on-device Send2 service.</div>
+          <div class="grid3" id="notifyServices">
+            <div class="field row-inline" data-service="email"><label style="flex:1;margin:0;">📧 Email</label><label class="toggle"><input type="checkbox"><span class="track"></span><span class="thumb"></span></label></div>
+            <div class="field row-inline" data-service="telegram"><label style="flex:1;margin:0;">💬 Telegram</label><label class="toggle"><input type="checkbox"><span class="track"></span><span class="thumb"></span></label></div>
+            <div class="field row-inline" data-service="ntfy"><label style="flex:1;margin:0;">🔔 ntfy</label><label class="toggle"><input type="checkbox"><span class="track"></span><span class="thumb"></span></label></div>
+            <div class="field row-inline" data-service="webhook"><label style="flex:1;margin:0;">🔗 Webhook</label><label class="toggle"><input type="checkbox"><span class="track"></span><span class="thumb"></span></label></div>
+            <div class="field row-inline" data-service="gphotos"><label style="flex:1;margin:0;">📷 Google Photos</label><label class="toggle"><input type="checkbox"><span class="track"></span><span class="thumb"></span></label></div>
+            <div class="field row-inline" data-service="gotify"><label style="flex:1;margin:0;">🔕 Gotify</label><label class="toggle"><input type="checkbox"><span class="track"></span><span class="thumb"></span></label></div>
+          </div>
+          <div class="mini-actions"><a class="pill-btn" href="/tool-send2.html">Configure each service</a></div>
+        </div>
+        <div class="card">
+          <h3>Home automation</h3>
+          <div class="field row-inline"><label style="flex:1;margin:0;">Home Assistant</label><label class="toggle"><input type="checkbox" id="notifyHa"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field row-inline" style="margin-top:10px;"><label style="flex:1;margin:0;">MQTT (for custom automations)</label><label class="toggle"><input type="checkbox" id="notifyMqtt"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="grid2" style="margin-top:12px;">
+            <div class="field"><label>MQTT broker</label><input type="text" id="mqttHost" placeholder="192.168.1.10"></div>
+            <div class="field"><label>MQTT topic</label><input type="text" id="mqttTopic" placeholder="thingino/events"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ACCOUNT — real admin profile, password change, time -->
+      <div class="tabpanel" id="tab-account">
+        <div class="card">
+          <h2>Sign-in</h2>
+          <div class="grid2">
+            <div class="field"><label>Username</label><input type="text" id="accountUser" value="root" readonly></div>
+            <div class="field"><label>New password</label><input type="password" id="accountPass" placeholder="Leave blank to keep current" autocomplete="new-password"></div>
+          </div>
+          <div class="sect-note">Password changes use the same root account and chpasswd path as the stock Web Interface page; the current session is preserved.</div>
+        </div>
+        <div class="card">
+          <h3>Date &amp; time</h3>
+          <div class="grid2">
+            <div class="field"><label>Timezone</label><select id="accountTz"><option value="">— current —</option></select></div>
+            <div class="field"><label>Time source (NTP)</label><input type="text" id="accountNtp" placeholder="pool.ntp.org"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADVANCED: SYSTEM INFO -->
+      <div class="tabpanel" id="tab-info">
+        <div class="card">
+          <h2>System info &amp; logs</h2>
+          <div class="sect-note">These open the real on-device <code>/info.html?&lt;key&gt;</code> views.</div>
+          <div class="grid3" id="infoChips">
+            <a class="chip" href="/info.html?crontab">crontab</a><a class="chip" href="/info.html?onvif">onvif.json</a><a class="chip" href="/info.html?thingino">thingino.json</a>
+            <a class="chip" href="/info.html?dmesg">dmesg</a><a class="chip" href="/info.html?logcat">logcat</a><a class="chip" href="/info.html?logread">logread</a>
+            <a class="chip" href="/info.html?lsmod">lsmod</a><a class="chip" href="/info.html?netstat">netstat</a><a class="chip" href="/info.html?release">os-release</a>
+            <a class="chip" href="/info.html?top">top</a><a class="chip" href="/info.html?status">status</a><a class="chip" href="/info-diagnostic.html">diagnostic info</a>
+          </div>
+          <div class="mini-actions"><a class="pill-btn" href="/info-usage.html">System usage</a><a class="pill-btn" href="/info-overlay.html">Overlay partition</a></div>
+        </div>
+      </div>
+
+      <!-- ADVANCED: REMOTE LOGGING -->
+      <div class="tabpanel" id="tab-syslog">
+        <div class="card">
+          <h2>Remote logging</h2>
+          <div class="grid2">
+            <div class="field"><label>Syslog server</label><input type="text" id="syslogHost" placeholder="192.168.1.10"></div>
+            <div class="field"><label>Port</label><input type="number" id="syslogPort" value="514"></div>
+          </div>
+          <div class="field row-inline"><label style="flex:1;margin:0;">Send to remote host</label><label class="toggle"><input type="checkbox" id="syslogEnabled"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field row-inline"><label style="flex:1;margin:0;">Also keep a local file</label><label class="toggle"><input type="checkbox" id="syslogFile"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="status-line" id="syslogNote">Saved through /x/json-config-syslog.cgi — the real endpoint used by the stock page.</div>
+        </div>
+      </div>
+
+      <!-- ADVANCED: TOOLS -->
+      <div class="tabpanel" id="tab-filemanager"><div class="card"><h2>File manager</h2><p class="caption">Browse the overlay and SD card with the real on-device file manager.</p><div class="mini-actions"><a class="pill-btn primary" href="/tool-file-manager.html">Open file manager</a></div></div></div>
+      <div class="tabpanel" id="tab-nettest"><div class="card"><h2>Network test</h2><p class="caption">Ping / traceroute from the camera.</p><div class="mini-actions"><a class="pill-btn primary" href="/tool-ping-trace.html">Open network test</a></div></div></div>
+
+      <!-- ADVANCED: VPN ENCRYPTION KEYS -->
+      <div class="tabpanel" id="tab-wgkeys">
+        <div class="card">
+          <h2>VPN encryption keys</h2>
+          <div class="caption">Raw WireGuard key management — most people never need this page; the on/off switch lives in Network &amp; Access.</div>
+          <div class="mini-actions">
+            <button class="pill-btn primary" id="wgGenPair">Generate key pair</button>
+            <button class="pill-btn" id="wgGenPsk">Generate pre-shared key</button>
+            <a class="pill-btn" href="/config-wireguard.html">Full WireGuard config</a>
+          </div>
+          <div class="field" style="margin-top:14px;"><label>Private key</label><input type="password" id="wgPriv" readonly></div>
+          <div class="field"><label>Public key</label><input type="text" id="wgPub" readonly></div>
+          <div class="status-line" id="wgNote">Key generation uses the real /x/json-config-wireguard.cgi actions.</div>
+        </div>
+      </div>
+
+      <!-- ADVANCED: STREAMER INTERNALS -->
+      <div class="tabpanel" id="tab-streamer">
+        <div class="card">
+          <h2>Streamer internals (Prudynt-T)</h2>
+          <div class="grid3" id="streamerChips">
+            <a class="chip" href="/streamer-main.html">Streamer main</a><a class="chip" href="/config-audio.html">Audio</a><a class="chip" href="/config-video.html">Image quality</a>
+            <a class="chip" href="/config-rtsp.html">RTSP</a><a class="chip" href="/config-osd.html">OSD elements</a><a class="chip" href="/config-photosensing.html">Photosensing</a>
+            <a class="chip" href="/config-sensor.html">Sensor IQ</a><a class="chip" href="/info.html?prudynt">Streamer status</a>
+          </div>
+          <div class="sect-note">These pages exist only in builds that include the matching streamer package; missing links simply 404 rather than pretending to work.</div>
+        </div>
+      </div>
+
+      <!-- ADVANCED: SSH / DANGER ZONE -->
+      <div class="tabpanel" id="tab-advanced">
+        <div class="card"><h2>SSH / keys</h2><table class="kv"><tr><td>Accounts</td><td class="v" id="sshAccounts">See real reset page</td></tr><tr><td>Remote login</td><td class="v">Managed by the device root account</td></tr></table><div class="mini-actions"><a class="pill-btn" href="/reset.html">Open reset &amp; recovery tools</a></div></div>
+        <div class="card danger-zone"><h2>Danger zone</h2><p class="caption">Factory reset uses the stock firmware-reset flow and its original confirmation step.</p><button class="pill-btn danger" id="factoryResetBtn">Factory reset</button><div class="status-line" id="resetNote"></div></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/a/portal.js"></script>
+</body>
+</html>

@@ -95,6 +95,8 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/index.cgi
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/index.html \
 		$(TARGET_DIR)/var/www/index.html
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/portal.html \
+		$(TARGET_DIR)/var/www/portal.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/info.html \
 		$(TARGET_DIR)/var/www/info.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/info-diagnostic.html \
@@ -191,6 +193,8 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/a/navigation.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/preview.js \
 		$(TARGET_DIR)/var/www/a/preview.js
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/portal.js \
+		$(TARGET_DIR)/var/www/a/portal.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/sei-rotate.js \
 		$(TARGET_DIR)/var/www/a/sei-rotate.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/reset.js \
@@ -246,6 +250,12 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 	# Styles
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/main.css \
 		$(TARGET_DIR)/var/www/a/main.css
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/portal.css \
+		$(TARGET_DIR)/var/www/a/portal.css
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/assets/qwickapps-q-logo.svg \
+		$(TARGET_DIR)/var/www/assets/qwickapps-q-logo.svg
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/assets/momo-64.png \
+		$(TARGET_DIR)/var/www/assets/momo-64.png
 
 	# Images
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/logo.svg \
