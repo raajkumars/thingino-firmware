@@ -45,6 +45,51 @@
     say(noteId, what + " is not available in this firmware build (endpoint missing).", true);
   }
 
+  function clampPct(value) {
+    var n = Number(value);
+    return isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+  }
+
+  // Streamer settings (privacy, mic gain) are not plain config files. They are
+  // served by the local agent and reached through the camera's own CGI proxy.
+  var apiKeyPromise;
+  function agentKey() {
+    if (!apiKeyPromise) {
+      apiKeyPromise = api("/x/api-key.cgi")
+        .then(function (k) { return (k && k.exists && k.api_key) || ""; })
+        .catch(function () { return ""; });
+    }
+    return apiKeyPromise;
+  }
+
+  async function agentApi(path, options) {
+    var opts = options || {};
+    var key = await agentKey();
+    var headers = Object.assign({ Accept: "application/json" }, opts.headers || {});
+    var body;
+    if (opts.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(opts.body);
+    }
+    if (key) headers["X-API-Key"] = key;
+    var response = await fetch("/x/agent.cgi?agent_path=" + encodeURIComponent(path), {
+      method: opts.method || "GET",
+      headers: headers,
+      body: body,
+      cache: "no-store",
+    });
+    var text = await response.text();
+    var data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
+    if (!response.ok || (data && data.error)) {
+      var m = data && data.error && data.error.message
+        ? data.error.message
+        : "HTTP " + response.status;
+      throw new Error(m);
+    }
+    return data;
+  }
+
   function segBind(wrap, cb) {
     if (!wrap) return;
     wrap.querySelectorAll("button").forEach(function (b) {
@@ -211,64 +256,111 @@
 
   loaders.picture = {
     load: async function () {
+      var band = "off";
       try {
         var d = await api("/x/json-config-daynight.cgi");
         store.daynight = d;
         var cfg = (d && d.daynight) || d || {};
-        if (cfg.mode) segSet($("picNightSeg"), String(cfg.mode).replace(/^auto$/, "auto"));
-        if (cfg.threshold != null) { $("picThreshold").value = cfg.threshold; $("picThreshVal").textContent = cfg.threshold; }
-        if (cfg.dusk2dawn != null) $("picDusk").checked = bool(cfg.dusk2dawn);
+        var mode = String(cfg.force_mode || "").toLowerCase();
+        segSet($("picNightSeg"), mode === "day" || mode === "night" ? mode : "auto");
+        if (cfg.night_threshold != null) {
+          var pct = clampPct(cfg.night_threshold);
+          $("picThreshold").value = pct;
+          $("picThreshVal").textContent = pct;
+        }
+        var c = cfg.controls || {};
+        band = c.ir850 && !c.ir940 ? "ir850" : !c.ir850 && c.ir940 ? "ir940" : "off";
+        $("picIrBand").value = band;
       } catch (e) {
-        say("picNote", "Day/night config endpoint not present in this build.", true);
+        say("picNote", "Day/night endpoint is not available in this build.", true);
       }
+
+      // Sunrise/sunset scheduling is the real dusk/dawn control on this device.
+      try {
+        var s = await api("/x/json-daynight-sun.cgi");
+        store.sun = s;
+        var sun = (s && s.sun) || s || {};
+        if (sun.enabled != null) $("picDusk").checked = bool(sun.enabled);
+      } catch (e) {
+        $("picDusk").disabled = true;
+      }
+
       try {
         var g = await api("/x/json-config-gpio.cgi");
         store.gpio = g;
-        var gc = (g && g.gpio) || g || {};
-        if (gc.ir_brightness != null) $("picIr").value = Number(gc.ir_brightness);
-        if (gc.ir_led != null) $("picIrBand").value = bool(gc.ir_led) ? "ir850" : "off";
-        if (gc.status_led != null) $("picStatusLed").value = String(gc.status_led).toLowerCase();
-      } catch (e) { /* optional */ }
+        var gpio = (g && g.gpio) || {};
+        var led = (g && g.led) || {};
+        if (led.startup_indicator) $("picStatusLed").value = led.startup_indicator;
+        var pin = gpio[band];
+        if (pin && pin.pwm_level != null) $("picIr").value = clampPct(pin.pwm_level);
+        else if (band !== "off") $("picIr").disabled = true;
+      } catch (e) { /* GPIO package absent */ }
 
-      // Privacy lives in the streamer config (real endpoint: json-prudynt.cgi)
+      // Privacy is streamer state, reached through the agent CGI proxy.
       try {
-        var p = await api("/x/json-prudynt.cgi", { method: "POST", body: { privacy: { enabled: null } } });
-        if (p && p.privacy && p.privacy.enabled != null) $("picPrivacy").checked = bool(p.privacy.enabled);
-      } catch (e) { /* streamer absent */ }
+        var p = await agentApi("/api/v1/config/privacy");
+        store.privacyAgent = true;
+        var pv = (p && p.privacy) || p || {};
+        if (pv.enabled != null) $("picPrivacy").checked = bool(pv.enabled);
+      } catch (e) {
+        $("picPrivacy").disabled = true;
+      }
     },
     save: async function () {
       var msgs = [];
+      var band = $("picIrBand").value;
       if (store.daynight) {
         var d = JSON.parse(JSON.stringify(store.daynight));
         var cfg = d.daynight || d;
-        cfg.mode = segGet($("picNightSeg"), "auto");
-        cfg.threshold = parseInt($("picThreshold").value, 10);
-        cfg.dusk2dawn = $("picDusk").checked;
-        await api("/x/json-config-daynight.cgi", { method: "POST", body: d });
+        var mode = segGet($("picNightSeg"), "auto");
+        cfg.force_mode = mode === "auto" ? "" : mode;
+        var th = clampPct($("picThreshold").value);
+        cfg.night_threshold = th;
+        var day = Number(cfg.day_threshold);
+        if (!isFinite(day) || day <= th) cfg.day_threshold = Math.min(100, th + 25);
+        cfg.controls = cfg.controls || {};
+        cfg.controls.ir850 = band === "ir850";
+        cfg.controls.ir940 = band === "ir940";
+        await api("/x/json-config-daynight.cgi", {
+          method: "POST",
+          body: d.daynight ? d : { daynight: cfg },
+        });
         msgs.push("day/night");
+      }
+      if (store.sun) {
+        var s = JSON.parse(JSON.stringify(store.sun));
+        var sun = s.sun || s;
+        sun.enabled = $("picDusk").checked;
+        await api("/x/json-daynight-sun.cgi", {
+          method: "POST",
+          body: s.sun ? s : { sun: sun },
+        });
+        msgs.push("sun schedule");
       }
       if (store.gpio) {
         var g = JSON.parse(JSON.stringify(store.gpio));
-        var gc = g.gpio || g;
-        gc.ir_brightness = parseInt($("picIr").value, 10);
-        gc.ir_led = $("picIrBand").value !== "off";
-        gc.status_led = $("picStatusLed").value;
-        await api("/x/json-config-gpio.cgi", { method: "POST", body: g });
+        var gpio = g.gpio || {};
+        var payload = { startup_indicator: $("picStatusLed").value };
+        ["ir850", "ir940", "white"].forEach(function (name) {
+          var p = gpio[name] || {};
+          if (p.pin == null || p.pin === "") return;
+          var out = { pin: p.pin, inv: !!p.active_low, lit: !!p.active_on_boot };
+          if (p.pwm_channel != null) out.ch = p.pwm_channel;
+          if (p.pwm_level != null) out.lvl = p.pwm_level;
+          if (name === band && !$("picIr").disabled) out.lvl = clampPct($("picIr").value);
+          payload[name] = out;
+        });
+        await api("/x/json-config-gpio.cgi", { method: "POST", body: payload });
         msgs.push("GPIO");
       }
-      var band = $("picIrBand").value;
-      if (band !== "off") {
+      if (store.privacyAgent) {
         try {
-          await api("/x/json-prudynt.cgi", { method: "POST", body: { privacy: { enabled: $("picPrivacy").checked } } });
-          await api("/x/json-config-save.cgi", { method: "POST", body: {} });
+          await agentApi("/api/v1/actions/privacy", {
+            method: "POST",
+            body: { enabled: $("picPrivacy").checked },
+          });
           msgs.push("privacy");
-        } catch (e) { /* streamer absent */ }
-      } else {
-        try {
-          await api("/x/json-prudynt.cgi", { method: "POST", body: { privacy: { enabled: $("picPrivacy").checked } } });
-          await api("/x/json-config-save.cgi", { method: "POST", body: {} });
-          msgs.push("privacy");
-        } catch (e) { /* streamer absent */ }
+        } catch (e) { /* streamer agent absent */ }
       }
       return msgs.length ? "Saved " + msgs.join(", ") + "." : "No picture backend available in this build.";
     },
@@ -279,20 +371,39 @@
       try {
         var d = await api("/x/json-send2.cgi");
         store.send2 = d;
-        if (d.speaker) {
-          if (d.speaker.volume != null) $("audioSpeaker").value = Number(d.speaker.volume);
-          if (d.speaker.microphone_volume != null) $("audioMic").value = Number(d.speaker.microphone_volume);
-        }
-      } catch (e) { markUnavailable("picNote", "Audio config"); }
+        var spk = (d && d.speaker) || {};
+        if (spk.volume != null) $("audioSpeaker").value = clampPct(spk.volume);
+      } catch (e) {
+        markUnavailable("audioNote", "Speaker config");
+      }
+      try {
+        var m = await agentApi("/api/v1/settings/audio/mic-gain");
+        store.micAgent = true;
+        var gain = m && (m.mic_gain != null ? m.mic_gain : m.gain);
+        if (gain != null) $("audioMic").value = clampPct(Number(gain) * 100 / 31);
+      } catch (e) {
+        $("audioMic").disabled = true;
+      }
     },
     save: async function () {
-      if (!store.send2) throw new Error("Audio config endpoint not available.");
-      var d = JSON.parse(JSON.stringify(store.send2));
-      d.speaker = d.speaker || {};
-      d.speaker.volume = parseInt($("audioSpeaker").value, 10);
-      d.speaker.microphone_volume = parseInt($("audioMic").value, 10);
-      await api("/x/json-send2.cgi", { method: "POST", body: d });
-      return "Audio settings saved.";
+      var msgs = [];
+      if (store.send2) {
+        var d = JSON.parse(JSON.stringify(store.send2));
+        d.speaker = d.speaker || {};
+        d.speaker.volume = clampPct($("audioSpeaker").value);
+        await api("/x/json-send2.cgi", { method: "POST", body: { speaker: d.speaker } });
+        msgs.push("speaker");
+      }
+      if (store.micAgent) {
+        var gain = Math.round(clampPct($("audioMic").value) * 31 / 100);
+        await agentApi("/api/v1/settings/audio/mic-gain", {
+          method: "PATCH",
+          body: { mic_gain: gain },
+        });
+        msgs.push("microphone");
+      }
+      if (!msgs.length) throw new Error("Audio endpoints are not available in this build.");
+      return "Saved " + msgs.join(" and ") + ".";
     },
   };
 

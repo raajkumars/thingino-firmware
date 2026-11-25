@@ -203,7 +203,7 @@
           <div class="caption">When to switch between color and infrared black-and-white.</div>
           <div class="seg" style="max-width:280px;" id="picNightSeg"><button class="active" data-value="auto">Auto</button><button data-value="day">Day</button><button data-value="night">Night</button></div>
           <div class="field" style="margin-top:14px;"><label>Switch sensitivity <span class="num" id="picThreshVal">40</span></label><input class="slider" id="picThreshold" type="range" min="0" max="100" value="40"></div>
-          <div class="field row-inline" style="margin-top:4px;"><label style="flex:1;margin:0;">Smooth transition at dusk/dawn<span class="hint" style="display:block;">Fades gradually instead of snapping, so motion alerts stay calm</span></label><label class="toggle"><input type="checkbox" id="picDusk"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field row-inline" style="margin-top:4px;"><label style="flex:1;margin:0;">Schedule by sunrise/sunset<span class="hint" style="display:block;">Switch modes automatically at local dusk and dawn using the camera's sun schedule</span></label><label class="toggle"><input type="checkbox" id="picDusk"><span class="track"></span><span class="thumb"></span></label></div>
         </div>
         <div class="grid2">
           <div class="card">
@@ -217,7 +217,7 @@
             <div class="field row-inline"><label style="flex:1;margin:0;">Blank the picture (privacy mode)</label><label class="toggle"><input type="checkbox" id="picPrivacy"><span class="track"></span><span class="thumb"></span></label></div>
           </div>
         </div>
-        <div class="sect-note" id="picNote">Values are read from the on-device day/night, GPIO and privacy config endpoints.</div>
+        <div class="sect-note" id="picNote">Values come from the on-device day/night, sun-schedule, GPIO and streamer endpoints.</div>
       </div>
 
       <!-- AUDIO — real speaker/mic config from send2 backend -->
@@ -228,7 +228,7 @@
             <div class="field"><label>Microphone</label><input class="slider" id="audioMic" type="range" min="0" max="100" value="70"></div>
             <div class="field"><label>Speaker</label><input class="slider" id="audioSpeaker" type="range" min="0" max="100" value="65"></div>
           </div>
-          <div class="sect-note">Microphone and speaker values come from the on-device notification/audio config. Some builds expose speaker volume only.</div>
+          <div class="sect-note" id="audioNote">Speaker volume comes from the on-device send2 config; microphone gain comes from the streamer agent when available.</div>
         </div>
       </div>
 
