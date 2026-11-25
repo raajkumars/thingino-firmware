@@ -163,31 +163,49 @@
         </div>
       </div>
 
-      <!-- FIRMWARE / OTA — real version info only, no fake controls -->
+      <!-- FIRMWARE / OTA — real version + flash metadata; no auto-flash here -->
       <div class="tabpanel" id="tab-firmware">
         <div class="card">
           <h2>Firmware</h2>
           <table class="kv">
             <tr><td>Current version</td><td class="v" id="fwVersion">reading…</td></tr>
-            <tr><td>Build / branch</td><td class="v" id="fwBuild">reading…</td></tr>
+            <tr><td>Build ID</td><td class="v" id="fwBuild">reading…</td></tr>
             <tr><td>Kernel</td><td class="v" id="fwKernel">reading…</td></tr>
             <tr><td>Health handshake</td><td class="v"><span class="badge ok">on-device</span></td></tr>
           </table>
-          <div class="sect-note">This firmware exposes no automatic update or rollback CGI. Upgrade tools, when compiled in, live on the real <a href="/tool-upgrade.html">firmware tools page</a>.</div>
+          <div class="sect-note">Version strings are read from /x/info.cgi on this camera.</div>
+        </div>
+        <div class="card">
+          <h3>Over-the-air update</h3>
+          <div class="field"><label>Update scope</label><select id="fwOtaMode" disabled><option value="">reading…</option></select></div>
+          <div class="mini-actions">
+            <button class="pill-btn" id="fwPrepareOta" disabled>Prepare upgrade command</button>
+            <a class="pill-btn primary" href="/tool-upgrade.html">Open Flash operations</a>
+          </div>
+          <div class="status-line" id="fwNote">Reading update options from the camera…</div>
+          <div class="field" style="margin-top:10px;"><label>Command prepared on camera</label><input type="text" id="fwOtaCommand" readonly placeholder="No command prepared"></div>
+          <div class="sect-note">Preparing a command does not flash anything. Flash operations runs the upgrade and reboots the camera.</div>
         </div>
       </div>
 
-      <!-- STORAGE — real on-device SD info; no fake recorder toggles -->
+      <!-- STORAGE — real SD info + real config backup; no fake recorder toggles -->
       <div class="tabpanel" id="tab-storage">
         <div class="card">
           <h2>SD card &amp; recording</h2>
           <table class="kv">
             <tr><td>Card</td><td class="v" id="sdCard">checking…</td></tr>
+            <tr><td>Device</td><td class="v" id="sdDevice">—</td></tr>
             <tr><td>Capacity</td><td class="v" id="sdCapacity">—</td></tr>
             <tr><td>Mountpoint</td><td class="v" id="sdMount">—</td></tr>
             <tr><td>Status</td><td class="v" id="sdStatus">—</td></tr>
           </table>
           <div class="mini-actions"><a class="pill-btn" href="/tool-sdcard.html">Open SD card tools</a></div>
+        </div>
+        <div class="card">
+          <h3>Configuration backup</h3>
+          <div class="mini-actions"><button class="pill-btn primary" id="sdBackup" disabled>Download configuration</button></div>
+          <div class="status-line" id="backupNote">Checking the on-device backup endpoint…</div>
+          <div class="sect-note">The archive includes Wi-Fi credentials and service accounts. Store it securely; the firmware has no restore procedure.</div>
         </div>
         <div class="card">
           <h3>Recording</h3>
@@ -311,9 +329,10 @@
         <div class="card">
           <h3>Date &amp; time</h3>
           <div class="grid2">
-            <div class="field"><label>Timezone</label><select id="accountTz"><option value="">— current —</option></select></div>
+            <div class="field"><label>Timezone</label><input type="text" id="accountTz" list="accountTzList" placeholder="— current —" autocomplete="off"><datalist id="accountTzList"></datalist></div>
             <div class="field"><label>Time source (NTP)</label><input type="text" id="accountNtp" placeholder="pool.ntp.org"></div>
           </div>
+          <div class="status-line" id="accountNote">Timezone choices load from the camera's /a/tz.json table.</div>
         </div>
       </div>
 
