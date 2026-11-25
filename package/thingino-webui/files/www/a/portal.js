@@ -21,12 +21,24 @@
 
   async function api(path, options) {
     var opts = options || {};
+    var form = !!opts.form;
     var response = await fetch(path, {
       method: opts.method || "GET",
       headers: opts.body
-        ? Object.assign({ "Content-Type": "application/json" }, opts.headers || {})
+        ? Object.assign(
+            {
+              "Content-Type": form
+                ? "application/x-www-form-urlencoded"
+                : "application/json",
+            },
+            opts.headers || {}
+          )
         : Object.assign({ Accept: "application/json" }, opts.headers || {}),
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      body: opts.body
+        ? form
+          ? new URLSearchParams(opts.body).toString()
+          : JSON.stringify(opts.body)
+        : undefined,
       cache: "no-store",
     });
     var text = await response.text();
@@ -43,6 +55,51 @@
 
   function markUnavailable(noteId, what) {
     say(noteId, what + " is not available in this firmware build (endpoint missing).", true);
+  }
+
+  function b64text(raw) {
+    if (typeof raw !== "string" || !raw) return "";
+    try {
+      var bin = atob(raw.replace(/\s+/g, ""));
+      if (typeof TextDecoder === "undefined") return bin;
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function firstMatchLine(text, re) {
+    var lines = String(text || "").split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      if (re.test(lines[i])) return lines[i].trim();
+    }
+    return "";
+  }
+
+  function humanBytes(value) {
+    var n = Number(value);
+    if (!isFinite(n) || n <= 0) return "—";
+    var units = ["B", "KB", "MB", "GB", "TB"];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    return (i === 0 ? n : n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2)) + " " + units[i];
+  }
+
+  function commandOutput(payload, index) {
+    var commands = (payload && payload.commands) || [];
+    return b64text((commands[index || 0] || {}).output_base64);
+  }
+
+  async function flashMetadata() {
+    if (store.flash) return store.flash;
+    var d = await api("/x/tool-upgrade.cgi");
+    store.flash = (d && d.data) || d || {};
+    return store.flash;
   }
 
   function segBind(wrap, cb) {
@@ -407,12 +464,29 @@
         var t = await api("/x/json-config-time.cgi");
         store.time = t;
         if (t.tz_name) {
-          var o = document.createElement("option");
-          o.value = t.tz_name; o.textContent = t.tz_name + " (current)";
-          $("accountTz").appendChild(o); $("accountTz").value = t.tz_name;
+          var input = $("accountTz");
+          if (input && input.tagName === "SELECT") {
+            var o = document.createElement("option");
+            o.value = t.tz_name;
+            o.textContent = t.tz_name + " (current)";
+            input.appendChild(o);
+          }
+          if (input) input.value = t.tz_name;
         }
         $("accountNtp").value = t.ntp_server_0 || "";
-      } catch (e) { markUnavailable("picNote", "Time config"); }
+      } catch (e) { markUnavailable("accountNote", "Time config"); }
+      try {
+        var zones = await api("/a/tz.json");
+        var list = $("accountTzList");
+        if (list && Array.isArray(zones)) {
+          zones.forEach(function (z) {
+            if (!z || !z.n) return;
+            var option = document.createElement("option");
+            option.value = z.n;
+            list.appendChild(option);
+          });
+        }
+      } catch (e) { /* timezone table absent in this build */ }
     },
     save: async function () {
       var msgs = [];
@@ -446,16 +520,57 @@
 
   loaders.firmware = {
     load: async function () {
-      var keys = [["fwVersion", "release"], ["fwBuild", "status"], ["fwKernel", "dmesg"]];
-      for (var i = 0; i < keys.length; i++) {
-        try {
-          var d = await api("/x/info.cgi?" + keys[i][1]);
-          var raw = (d && (d.output_base64 || d.output || d.data)) || "";
-          var text = raw;
-          try { text = atob(raw); } catch (e) { /* not base64 */ }
-          if (typeof text === "string") $(keys[i][0]).textContent = text.trim().split("\n")[0].slice(0, 120) || "—";
-        } catch (e) { $(keys[i][0]).textContent = "unavailable"; }
+      try {
+        var release = await api("/x/info.cgi?release");
+        var os = {};
+        commandOutput(release, 0)
+          .split("\n")
+          .forEach(function (line) {
+            var m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+            if (!m) return;
+            try { os[m[1]] = JSON.parse(m[2]); } catch (e) { os[m[1]] = m[2]; }
+          });
+        $("fwVersion").textContent =
+          os.PRETTY_NAME || os.VERSION_ID || os.NAME || "not reported";
+        $("fwBuild").textContent =
+          os.BUILD_ID || os.VERSION_ID || "not reported by firmware";
+      } catch (e) {
+        $("fwVersion").textContent = "unavailable";
+        $("fwBuild").textContent = "unavailable";
       }
+      try {
+        var dmesg = await api("/x/info.cgi?dmesg");
+        var line = firstMatchLine(commandOutput(dmesg, 0), /Linux version/i);
+        $("fwKernel").textContent = line ? line.slice(0, 120) : "not reported";
+      } catch (e) {
+        $("fwKernel").textContent = "unavailable";
+      }
+      try {
+        var f = await flashMetadata();
+        var opts = (f.ota && f.ota.options) || [];
+        var sel = $("fwOtaMode");
+        if (sel) {
+          sel.innerHTML = "";
+          opts.forEach(function (o) {
+            var option = document.createElement("option");
+            option.value = o.id;
+            option.textContent = o.label || o.id;
+            option.title = o.description || "";
+            sel.appendChild(option);
+          });
+          sel.disabled = opts.length === 0;
+        }
+        var prepare = $("fwPrepareOta");
+        if (prepare) prepare.disabled = opts.length === 0;
+        if (f.ota && f.ota.notes) say("fwNote", f.ota.notes);
+      } catch (e) {
+        markUnavailable("fwNote", "Flash operations metadata");
+        var s = $("fwOtaMode"); if (s) s.disabled = true;
+        var b = $("fwPrepareOta"); if (b) b.disabled = true;
+      }
+    },
+    save: async function () {
+      return "Firmware has no editable settings here; use Flash operations to upgrade.";
     },
   };
 
@@ -463,14 +578,58 @@
     load: async function () {
       try {
         var d = await api("/x/tool-sdcard.cgi");
-        var card = d.card || d.device || d;
-        $("sdCard").textContent = card.model || card.name || card.device || "detected";
-        $("sdCapacity").textContent = card.size || card.capacity || (d.total ? d.total + " KB" : "—");
-        $("sdMount").textContent = card.mountpoint || d.mountpoint || "/mnt/mmcblk0p1";
-        $("sdStatus").textContent = d.mounted == null ? "see tools" : (bool(d.mounted) ? "Mounted" : "Not mounted");
+        var dev = d.device || null;
+        if (bool(d.has_sdcard) && dev) {
+          var label = [dev.vendor, dev.model]
+            .filter(function (x) { return !!x; })
+            .join(" ")
+            .trim();
+          $("sdCard").textContent = label || dev.name || dev.node || "SD card";
+          $("sdCapacity").textContent =
+            Number(dev.size_bytes) > 0
+              ? humanBytes(dev.size_bytes)
+              : "size not reported";
+          var mounts = b64text(d.reports && d.reports.mounts_b64)
+            .split("\n")
+            .filter(function (line) { return /^\/dev\/mmc/.test(line); });
+          var mount = mounts.length ? mounts[0].split(/\s+/)[1] : "";
+          $("sdMount").textContent =
+            mount || (dev.node ? dev.node + " (not mounted)" : "not mounted");
+          $("sdStatus").textContent = mount ? "Mounted" : "Detected, not mounted";
+          $("sdDevice").textContent = dev.node || "—";
+        } else {
+          $("sdCard").textContent = "No SD card detected";
+          $("sdCapacity").textContent = "—";
+          $("sdMount").textContent = "—";
+          $("sdStatus").textContent = "No card present";
+          $("sdDevice").textContent = "—";
+        }
       } catch (e) {
-        $("sdCard").textContent = "No SD card detected";
-        say("sdStatus", "SD card tool unavailable in this build.", true);
+        $("sdCard").textContent = "SD card tool unavailable";
+        $("sdCapacity").textContent = "—";
+        $("sdMount").textContent = "—";
+        $("sdStatus").textContent = "unavailable";
+        $("sdDevice").textContent = "—";
+      }
+      try {
+        var f = await flashMetadata();
+        var backup = f.backup || {};
+        var button = $("sdBackup");
+        if (button) {
+          button.disabled = !backup.download_url;
+          if (backup.download_url) {
+            say(
+              "backupNote",
+              "Archive: " + (backup.filename || "backup.tar.gz") +
+                " — contains Wi-Fi credentials and service accounts; store securely."
+            );
+          } else {
+            markUnavailable("backupNote", "Configuration backup");
+          }
+        }
+      } catch (e) {
+        var b = $("sdBackup"); if (b) b.disabled = true;
+        markUnavailable("backupNote", "Configuration backup");
       }
     },
   };
@@ -563,6 +722,32 @@
   }
   $("wgGenPair").addEventListener("click", function () { wgAction("generate_keypair"); });
   $("wgGenPsk").addEventListener("click", function () { wgAction("generate_psk"); });
+
+  $("fwPrepareOta").addEventListener("click", async function () {
+    var sel = $("fwOtaMode");
+    if (!sel || !sel.value) {
+      say("fwNote", "No update option is exposed by this firmware build.", true);
+      return;
+    }
+    var label = sel.options[sel.selectedIndex].textContent;
+    if (!confirm("Prepare a " + label + " upgrade command? Nothing is flashed until you run it from Flash operations.")) return;
+    try {
+      var d = await api("/x/tool-upgrade.cgi", {
+        method: "POST",
+        form: true,
+        body: { action: "ota", option: sel.value },
+      });
+      $("fwOtaCommand").value = d.command || "No command returned by the camera.";
+      say("fwNote", "Command prepared. Flash operations runs it and reboots the camera; this panel does not flash.");
+    } catch (e) {
+      say("fwNote", "Could not prepare upgrade: " + e.message, true);
+    }
+  });
+
+  $("sdBackup").addEventListener("click", function () {
+    var backup = store.flash && store.flash.backup;
+    if (backup && backup.download_url) window.location.href = backup.download_url;
+  });
 
   $("factoryResetBtn").addEventListener("click", function () {
     // Preserve the stock page's destructive-action confirmation.
