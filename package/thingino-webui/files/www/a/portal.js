@@ -21,12 +21,24 @@
 
   async function api(path, options) {
     var opts = options || {};
+    var form = !!opts.form;
     var response = await fetch(path, {
       method: opts.method || "GET",
       headers: opts.body
-        ? Object.assign({ "Content-Type": "application/json" }, opts.headers || {})
+        ? Object.assign(
+            {
+              "Content-Type": form
+                ? "application/x-www-form-urlencoded"
+                : "application/json",
+            },
+            opts.headers || {}
+          )
         : Object.assign({ Accept: "application/json" }, opts.headers || {}),
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      body: opts.body
+        ? form
+          ? new URLSearchParams(opts.body).toString()
+          : JSON.stringify(opts.body)
+        : undefined,
       cache: "no-store",
     });
     var text = await response.text();
@@ -43,6 +55,96 @@
 
   function markUnavailable(noteId, what) {
     say(noteId, what + " is not available in this firmware build (endpoint missing).", true);
+  }
+
+  function clampPct(value) {
+    var n = Number(value);
+    return isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+  }
+
+  // Streamer settings (privacy, mic gain) are not plain config files. They are
+  // served by the local agent and reached through the camera's own CGI proxy.
+  var apiKeyPromise;
+  function agentKey() {
+    if (!apiKeyPromise) {
+      apiKeyPromise = api("/x/api-key.cgi")
+        .then(function (k) { return (k && k.exists && k.api_key) || ""; })
+        .catch(function () { return ""; });
+    }
+    return apiKeyPromise;
+  }
+
+  async function agentApi(path, options) {
+    var opts = options || {};
+    var key = await agentKey();
+    var headers = Object.assign({ Accept: "application/json" }, opts.headers || {});
+    var body;
+    if (opts.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(opts.body);
+    }
+    if (key) headers["X-API-Key"] = key;
+    var response = await fetch("/x/agent.cgi?agent_path=" + encodeURIComponent(path), {
+      method: opts.method || "GET",
+      headers: headers,
+      body: body,
+      cache: "no-store",
+    });
+    var text = await response.text();
+    var data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
+    if (!response.ok || (data && data.error)) {
+      var m = data && data.error && data.error.message
+        ? data.error.message
+        : "HTTP " + response.status;
+      throw new Error(m);
+    }
+    return data;
+  }
+
+  function b64text(raw) {
+    if (typeof raw !== "string" || !raw) return "";
+    try {
+      var bin = atob(raw.replace(/\s+/g, ""));
+      if (typeof TextDecoder === "undefined") return bin;
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function firstMatchLine(text, re) {
+    var lines = String(text || "").split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      if (re.test(lines[i])) return lines[i].trim();
+    }
+    return "";
+  }
+
+  function humanBytes(value) {
+    var n = Number(value);
+    if (!isFinite(n) || n <= 0) return "—";
+    var units = ["B", "KB", "MB", "GB", "TB"];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    return (i === 0 ? n : n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2)) + " " + units[i];
+  }
+
+  function commandOutput(payload, index) {
+    var commands = (payload && payload.commands) || [];
+    return b64text((commands[index || 0] || {}).output_base64);
+  }
+
+  async function flashMetadata() {
+    if (store.flash) return store.flash;
+    var d = await api("/x/tool-upgrade.cgi");
+    store.flash = (d && d.data) || d || {};
+    return store.flash;
   }
 
   function segBind(wrap, cb) {
@@ -123,7 +225,11 @@
       var n = await api("/x/json-config-network.cgi");
       store.network = n;
       if (n.hostname) $("deviceName").value = n.hostname.replace(/\.(local|lan)$/i, "");
-      var ip = (n.interfaces && n.interfaces.eth0 && n.interfaces.eth0.address) || "";
+      var ifaces = (n.interfaces && [n.interfaces.eth0, n.interfaces.wlan0, n.interfaces.usb0]) || [];
+      var ip = "";
+      for (var i = 0; i < ifaces.length; i++) {
+        if (ifaces[i] && ifaces[i].address) { ip = ifaces[i].address; break; }
+      }
       var meta = $("deviceMeta");
       if (meta) { meta.dataset.ip = ip; meta.textContent = "online · " + (ip || "IP not configured"); }
       return n;
@@ -211,64 +317,111 @@
 
   loaders.picture = {
     load: async function () {
+      var band = "off";
       try {
         var d = await api("/x/json-config-daynight.cgi");
         store.daynight = d;
         var cfg = (d && d.daynight) || d || {};
-        if (cfg.mode) segSet($("picNightSeg"), String(cfg.mode).replace(/^auto$/, "auto"));
-        if (cfg.threshold != null) { $("picThreshold").value = cfg.threshold; $("picThreshVal").textContent = cfg.threshold; }
-        if (cfg.dusk2dawn != null) $("picDusk").checked = bool(cfg.dusk2dawn);
+        var mode = String(cfg.force_mode || "").toLowerCase();
+        segSet($("picNightSeg"), mode === "day" || mode === "night" ? mode : "auto");
+        if (cfg.night_threshold != null) {
+          var pct = clampPct(cfg.night_threshold);
+          $("picThreshold").value = pct;
+          $("picThreshVal").textContent = pct;
+        }
+        var c = cfg.controls || {};
+        band = c.ir850 && !c.ir940 ? "ir850" : !c.ir850 && c.ir940 ? "ir940" : "off";
+        $("picIrBand").value = band;
       } catch (e) {
-        say("picNote", "Day/night config endpoint not present in this build.", true);
+        say("picNote", "Day/night endpoint is not available in this build.", true);
       }
+
+      // Sunrise/sunset scheduling is the real dusk/dawn control on this device.
+      try {
+        var s = await api("/x/json-daynight-sun.cgi");
+        store.sun = s;
+        var sun = (s && s.sun) || s || {};
+        if (sun.enabled != null) $("picDusk").checked = bool(sun.enabled);
+      } catch (e) {
+        $("picDusk").disabled = true;
+      }
+
       try {
         var g = await api("/x/json-config-gpio.cgi");
         store.gpio = g;
-        var gc = (g && g.gpio) || g || {};
-        if (gc.ir_brightness != null) $("picIr").value = Number(gc.ir_brightness);
-        if (gc.ir_led != null) $("picIrBand").value = bool(gc.ir_led) ? "ir850" : "off";
-        if (gc.status_led != null) $("picStatusLed").value = String(gc.status_led).toLowerCase();
-      } catch (e) { /* optional */ }
+        var gpio = (g && g.gpio) || {};
+        var led = (g && g.led) || {};
+        if (led.startup_indicator) $("picStatusLed").value = led.startup_indicator;
+        var pin = gpio[band];
+        if (pin && pin.pwm_level != null) $("picIr").value = clampPct(pin.pwm_level);
+        else if (band !== "off") $("picIr").disabled = true;
+      } catch (e) { /* GPIO package absent */ }
 
-      // Privacy lives in the streamer config (real endpoint: json-prudynt.cgi)
+      // Privacy is streamer state, reached through the agent CGI proxy.
       try {
-        var p = await api("/x/json-prudynt.cgi", { method: "POST", body: { privacy: { enabled: null } } });
-        if (p && p.privacy && p.privacy.enabled != null) $("picPrivacy").checked = bool(p.privacy.enabled);
-      } catch (e) { /* streamer absent */ }
+        var p = await agentApi("/api/v1/config/privacy");
+        store.privacyAgent = true;
+        var pv = (p && p.privacy) || p || {};
+        if (pv.enabled != null) $("picPrivacy").checked = bool(pv.enabled);
+      } catch (e) {
+        $("picPrivacy").disabled = true;
+      }
     },
     save: async function () {
       var msgs = [];
+      var band = $("picIrBand").value;
       if (store.daynight) {
         var d = JSON.parse(JSON.stringify(store.daynight));
         var cfg = d.daynight || d;
-        cfg.mode = segGet($("picNightSeg"), "auto");
-        cfg.threshold = parseInt($("picThreshold").value, 10);
-        cfg.dusk2dawn = $("picDusk").checked;
-        await api("/x/json-config-daynight.cgi", { method: "POST", body: d });
+        var mode = segGet($("picNightSeg"), "auto");
+        cfg.force_mode = mode === "auto" ? "" : mode;
+        var th = clampPct($("picThreshold").value);
+        cfg.night_threshold = th;
+        var day = Number(cfg.day_threshold);
+        if (!isFinite(day) || day <= th) cfg.day_threshold = Math.min(100, th + 25);
+        cfg.controls = cfg.controls || {};
+        cfg.controls.ir850 = band === "ir850";
+        cfg.controls.ir940 = band === "ir940";
+        await api("/x/json-config-daynight.cgi", {
+          method: "POST",
+          body: d.daynight ? d : { daynight: cfg },
+        });
         msgs.push("day/night");
+      }
+      if (store.sun) {
+        var s = JSON.parse(JSON.stringify(store.sun));
+        var sun = s.sun || s;
+        sun.enabled = $("picDusk").checked;
+        await api("/x/json-daynight-sun.cgi", {
+          method: "POST",
+          body: s.sun ? s : { sun: sun },
+        });
+        msgs.push("sun schedule");
       }
       if (store.gpio) {
         var g = JSON.parse(JSON.stringify(store.gpio));
-        var gc = g.gpio || g;
-        gc.ir_brightness = parseInt($("picIr").value, 10);
-        gc.ir_led = $("picIrBand").value !== "off";
-        gc.status_led = $("picStatusLed").value;
-        await api("/x/json-config-gpio.cgi", { method: "POST", body: g });
+        var gpio = g.gpio || {};
+        var payload = { startup_indicator: $("picStatusLed").value };
+        ["ir850", "ir940", "white"].forEach(function (name) {
+          var p = gpio[name] || {};
+          if (p.pin == null || p.pin === "") return;
+          var out = { pin: p.pin, inv: !!p.active_low, lit: !!p.active_on_boot };
+          if (p.pwm_channel != null) out.ch = p.pwm_channel;
+          if (p.pwm_level != null) out.lvl = p.pwm_level;
+          if (name === band && !$("picIr").disabled) out.lvl = clampPct($("picIr").value);
+          payload[name] = out;
+        });
+        await api("/x/json-config-gpio.cgi", { method: "POST", body: payload });
         msgs.push("GPIO");
       }
-      var band = $("picIrBand").value;
-      if (band !== "off") {
+      if (store.privacyAgent) {
         try {
-          await api("/x/json-prudynt.cgi", { method: "POST", body: { privacy: { enabled: $("picPrivacy").checked } } });
-          await api("/x/json-config-save.cgi", { method: "POST", body: {} });
+          await agentApi("/api/v1/actions/privacy", {
+            method: "POST",
+            body: { enabled: $("picPrivacy").checked },
+          });
           msgs.push("privacy");
-        } catch (e) { /* streamer absent */ }
-      } else {
-        try {
-          await api("/x/json-prudynt.cgi", { method: "POST", body: { privacy: { enabled: $("picPrivacy").checked } } });
-          await api("/x/json-config-save.cgi", { method: "POST", body: {} });
-          msgs.push("privacy");
-        } catch (e) { /* streamer absent */ }
+        } catch (e) { /* streamer agent absent */ }
       }
       return msgs.length ? "Saved " + msgs.join(", ") + "." : "No picture backend available in this build.";
     },
@@ -279,20 +432,39 @@
       try {
         var d = await api("/x/json-send2.cgi");
         store.send2 = d;
-        if (d.speaker) {
-          if (d.speaker.volume != null) $("audioSpeaker").value = Number(d.speaker.volume);
-          if (d.speaker.microphone_volume != null) $("audioMic").value = Number(d.speaker.microphone_volume);
-        }
-      } catch (e) { markUnavailable("picNote", "Audio config"); }
+        var spk = (d && d.speaker) || {};
+        if (spk.volume != null) $("audioSpeaker").value = clampPct(spk.volume);
+      } catch (e) {
+        markUnavailable("audioNote", "Speaker config");
+      }
+      try {
+        var m = await agentApi("/api/v1/settings/audio/mic-gain");
+        store.micAgent = true;
+        var gain = m && (m.mic_gain != null ? m.mic_gain : m.gain);
+        if (gain != null) $("audioMic").value = clampPct(Number(gain) * 100 / 31);
+      } catch (e) {
+        $("audioMic").disabled = true;
+      }
     },
     save: async function () {
-      if (!store.send2) throw new Error("Audio config endpoint not available.");
-      var d = JSON.parse(JSON.stringify(store.send2));
-      d.speaker = d.speaker || {};
-      d.speaker.volume = parseInt($("audioSpeaker").value, 10);
-      d.speaker.microphone_volume = parseInt($("audioMic").value, 10);
-      await api("/x/json-send2.cgi", { method: "POST", body: d });
-      return "Audio settings saved.";
+      var msgs = [];
+      if (store.send2) {
+        var d = JSON.parse(JSON.stringify(store.send2));
+        d.speaker = d.speaker || {};
+        d.speaker.volume = clampPct($("audioSpeaker").value);
+        await api("/x/json-send2.cgi", { method: "POST", body: { speaker: d.speaker } });
+        msgs.push("speaker");
+      }
+      if (store.micAgent) {
+        var gain = Math.round(clampPct($("audioMic").value) * 31 / 100);
+        await agentApi("/api/v1/settings/audio/mic-gain", {
+          method: "PATCH",
+          body: { mic_gain: gain },
+        });
+        msgs.push("microphone");
+      }
+      if (!msgs.length) throw new Error("Audio endpoints are not available in this build.");
+      return "Saved " + msgs.join(" and ") + ".";
     },
   };
 
@@ -300,50 +472,94 @@
     load: async function () {
       var n = store.network || await api("/x/json-config-network.cgi");
       store.network = n;
+      var eth = (n.interfaces && n.interfaces.eth0) || {};
+      var wlan = (n.interfaces && n.interfaces.wlan0) || {};
+      var active = bool(eth.link_up) ? eth : bool(wlan.link_up) ? wlan : (eth.address ? eth : wlan);
+      var address = eth.address || wlan.address || "";
+
       $("netHostname").textContent = n.hostname || "—";
       $("netSsid").value = (n.wifi && n.wifi.ssid) || "";
-      var eth = (n.interfaces && (n.interfaces.eth0 || n.interfaces.eth)) || {};
+      if ($("netWifiPassword")) $("netWifiPassword").value = "";
       $("netDhcp").checked = eth.dhcp == null ? true : bool(eth.dhcp);
-      $("netAddress").textContent = eth.address || (n.wifi && n.wifi.address) || "—";
-      $("netGateway").textContent = eth.gateway || "—";
-      $("netWifiEnabled").checked = bool(n.wifi_ap && n.wifi_ap.enabled) || !!((n.wifi && n.wifi.ssid));
-      $("netStatus").textContent = $("netAddress").textContent !== "—" ? "Configured" : "Not configured";
-      $("netRtsp").textContent = "rtsp://" + (eth.address || location.hostname) + ":554/ch0";
+      $("netAddress").textContent = address || "—";
+      $("netGateway").textContent = active.gateway || "—";
+      $("netWifiEnabled").checked = bool(n.wifi_ap && n.wifi_ap.enabled);
+      $("netStatus").textContent = bool(active.link_up)
+        ? "Link up · " + (bool(active.dhcp) ? "DHCP" : "static")
+        : address ? "Configured · link down" : "Not configured";
+      $("netRtsp").textContent = "rtsp://" + (address || location.hostname) + ":554/ch0";
 
       try {
         var w = await api("/x/json-config-webui.cgi");
         store.webui = w;
         $("netRange").value = w.auth_bypass_ips || "";
-      } catch (e) { /* optional build */
-
+      } catch (e) {
+        $("netRange").disabled = true;
+        say("netNote", "Web UI access restrictions are not available in this build.", true);
       }
 
       try {
         var wg = await api("/x/json-config-wireguard.cgi");
         store.wg = wg;
-        $("netVpn").checked = bool(wg.enabled || (wg.wireguard && wg.wireguard.enabled));
-      } catch (e) { $("netVpn").disabled = true; }
+        $("netVpn").checked = bool(wg.enabled);
+        if (wg.wg_supported === false) {
+          $("netVpn").disabled = true;
+          say("netNote", "WireGuard tooling is not installed in this build.");
+        }
+      } catch (e) {
+        $("netVpn").disabled = true;
+      }
     },
     save: async function () {
       var n = JSON.parse(JSON.stringify(store.network || {}));
+      if (!n.hostname) throw new Error("Network settings did not load; reload the page.");
+      if (!(n.dns && (n.dns.primary || n.dns.secondary))) {
+        throw new Error("No DNS server is configured on this camera; set one in the stock Network page first.");
+      }
+
       n.wifi = n.wifi || {};
-      n.wifi.ssid = $("netSsid").value.trim();
+      var ssid = $("netSsid").value.trim();
+      var pass = $("netWifiPassword") ? $("netWifiPassword").value : "";
+      var previousSsid = (store.network.wifi && store.network.wifi.ssid) || "";
+      if (ssid && ssid !== previousSsid && !pass) {
+        throw new Error("Enter the Wi-Fi password for the new network before saving.");
+      }
+      n.wifi.ssid = ssid;
+      n.wifi.password = pass;
+      if (n.wifi.bssid == null) n.wifi.bssid = "";
+
       n.interfaces = n.interfaces || {};
-      var eth = n.interfaces.eth0 || n.interfaces.eth || {};
+      var eth = n.interfaces.eth0 || {};
       eth.dhcp = $("netDhcp").checked;
-      if (n.interfaces.eth0) n.interfaces.eth0 = eth; else if (n.interfaces.eth) n.interfaces.eth = eth;
+      n.interfaces.eth0 = eth;
       n.wifi_ap = n.wifi_ap || {};
       n.wifi_ap.enabled = $("netWifiEnabled").checked;
+
       await api("/x/json-config-network.cgi", { method: "POST", body: n });
-      if ($("netRange").value.trim() && $("netRange").value.trim() !== (store.webui && store.webui.auth_bypass_ips)) {
-        var w = JSON.parse(JSON.stringify(store.webui || {}));
-        w.theme = w.theme || "auto";
-        w.paranoid = w.paranoid == null ? false : w.paranoid;
-        w.track_focus = w.track_focus == null ? true : w.track_focus;
-        w.focus_timeout = w.focus_timeout || 0;
-        w.auth_bypass_ips = $("netRange").value.trim();
-        await api("/x/json-config-webui.cgi", { method: "POST", body: w });
-        store.webui = w;
+      store.network.wifi = store.network.wifi || {};
+      store.network.wifi.ssid = ssid;
+      if (pass) $("netWifiPassword").value = "";
+
+      if (store.webui) {
+        var w = JSON.parse(JSON.stringify(store.webui));
+        var range = $("netRange").value.trim();
+        if (range !== (store.webui.auth_bypass_ips || "")) {
+          w.theme = ["light", "dark", "auto"].indexOf(w.theme) >= 0 ? w.theme : "auto";
+          w.paranoid = bool(w.paranoid);
+          w.track_focus = w.track_focus == null ? false : bool(w.track_focus);
+          w.focus_timeout = Number(w.focus_timeout) || 0;
+          w.auth_bypass_ips = range;
+          await api("/x/json-config-webui.cgi", { method: "POST", body: w });
+          store.webui = w;
+        }
+      }
+
+      if (store.wg && !$("netVpn").disabled) {
+        var wg = JSON.parse(JSON.stringify(store.wg));
+        wg.enabled = $("netVpn").checked;
+        delete wg.action;
+        await api("/x/json-config-wireguard.cgi", { method: "POST", body: wg });
+        store.wg.enabled = wg.enabled;
       }
       return "Network settings saved (a reboot may be required).";
     },
@@ -351,48 +567,84 @@
 
   loaders.notify = {
     load: async function () {
+      var notes = [];
       try {
-        var d = await api("/x/json-send2.cgi");
-        store.send2 = d;
-        var motion = (d.motion || {});
+        var d = await api("/x/json-config-send2.cgi");
+        store.notifyConfig = d;
+        var motion = d.motion || {};
         document.querySelectorAll("#notifyServices [data-service]").forEach(function (row) {
-          var key = row.dataset.service;
-          var found = null;
-          Object.keys(motion).forEach(function (k) { if (k.toLowerCase() === key) found = k; });
           var input = row.querySelector("input");
-          input.disabled = !found;
-          if (found) input.checked = bool(motion[found]);
-          row.dataset.realKey = found || "";
+          var key = "send2" + row.dataset.service;
+          input.checked = bool(motion[key]);
+          input.disabled = false;
+          row.dataset.realKey = key;
         });
-        var mqtt = d.mqtt || {};
-        $("notifyMqtt").checked = bool(mqtt.enabled);
+        var mqtt = (d.config && d.config.mqtt) || {};
+        $("notifyMqtt").checked = bool(motion.send2mqtt);
         $("mqttHost").value = mqtt.host || "";
         $("mqttTopic").value = mqtt.topic || "";
-      } catch (e) { markUnavailable("syslogNote", "Send2 config"); }
+        if (d.meta && d.meta.mqtt_available === false) {
+          $("notifyMqtt").disabled = true;
+          notes.push("MQTT publisher is not installed in this build.");
+        }
+      } catch (e) {
+        document.querySelectorAll("#notifyServices input").forEach(function (input) {
+          input.disabled = true;
+        });
+        $("notifyMqtt").disabled = true;
+        notes.push("Send2 notification config is not available in this build.");
+      }
+
       try {
         var ha = await api("/x/json-config-ha.cgi");
         store.ha = ha;
         $("notifyHa").checked = bool(ha.enabled);
-      } catch (e) { $("notifyHa").disabled = true; }
+      } catch (e) {
+        $("notifyHa").disabled = true;
+        notes.push("Home Assistant integration is not installed in this build.");
+      }
+      say("notifyNote", notes.join(" "), notes.length > 0);
     },
     save: async function () {
-      var d = JSON.parse(JSON.stringify(store.send2 || {}));
-      d.motion = d.motion || {};
-      document.querySelectorAll("#notifyServices [data-service]").forEach(function (row) {
-        var k = row.dataset.realKey;
-        if (k) d.motion[k] = row.querySelector("input").checked;
-      });
-      d.mqtt = d.mqtt || {};
-      d.mqtt.enabled = $("notifyMqtt").checked;
-      if ($("mqttHost").value.trim()) d.mqtt.host = $("mqttHost").value.trim();
-      if ($("mqttTopic").value.trim()) d.mqtt.topic = $("mqttTopic").value.trim();
-      await api("/x/json-send2.cgi", { method: "POST", body: d });
-      if (store.ha) {
+      if (!store.notifyConfig) throw new Error("Notification settings did not load; reload the page.");
+
+      var haPayload = null;
+      if (store.ha && !$("notifyHa").disabled) {
         var ha = JSON.parse(JSON.stringify(store.ha));
+        var enabling = $("notifyHa").checked && !bool(ha.enabled);
+        if (enabling && !(ha.mqtt && ha.mqtt.host)) {
+          throw new Error("Set the Home Assistant MQTT broker on the Home Assistant page first.");
+        }
         ha.enabled = $("notifyHa").checked;
-        await api("/x/json-config-ha.cgi", { method: "POST", body: ha });
+        haPayload = ha;
       }
-      return "Notification settings saved.";
+
+      var d = JSON.parse(JSON.stringify(store.notifyConfig));
+      var motion = d.motion || {};
+      document.querySelectorAll("#notifyServices [data-service]").forEach(function (row) {
+        var input = row.querySelector("input");
+        if (!input.disabled) motion[row.dataset.realKey] = input.checked;
+      });
+      if (!$("notifyMqtt").disabled) motion.send2mqtt = $("notifyMqtt").checked;
+
+      var cfg = JSON.parse(JSON.stringify(d.config || {}));
+      cfg.mqtt = cfg.mqtt || {};
+      cfg.mqtt.host = $("mqttHost").value.trim();
+      cfg.mqtt.topic = $("mqttTopic").value.trim();
+      await api("/x/json-config-send2.cgi", {
+        method: "POST",
+        body: { config: cfg, motion: motion },
+      });
+      store.notifyConfig.config = cfg;
+      store.notifyConfig.motion = motion;
+
+      var saved = ["notification destinations"];
+      if (haPayload) {
+        await api("/x/json-config-ha.cgi", { method: "POST", body: haPayload });
+        store.ha = haPayload;
+        saved.push("Home Assistant");
+      }
+      return "Saved " + saved.join(" and ") + ".";
     },
   };
 
@@ -407,12 +659,29 @@
         var t = await api("/x/json-config-time.cgi");
         store.time = t;
         if (t.tz_name) {
-          var o = document.createElement("option");
-          o.value = t.tz_name; o.textContent = t.tz_name + " (current)";
-          $("accountTz").appendChild(o); $("accountTz").value = t.tz_name;
+          var input = $("accountTz");
+          if (input && input.tagName === "SELECT") {
+            var o = document.createElement("option");
+            o.value = t.tz_name;
+            o.textContent = t.tz_name + " (current)";
+            input.appendChild(o);
+          }
+          if (input) input.value = t.tz_name;
         }
         $("accountNtp").value = t.ntp_server_0 || "";
-      } catch (e) { markUnavailable("picNote", "Time config"); }
+      } catch (e) { markUnavailable("accountNote", "Time config"); }
+      try {
+        var zones = await api("/a/tz.json");
+        var list = $("accountTzList");
+        if (list && Array.isArray(zones)) {
+          zones.forEach(function (z) {
+            if (!z || !z.n) return;
+            var option = document.createElement("option");
+            option.value = z.n;
+            list.appendChild(option);
+          });
+        }
+      } catch (e) { /* timezone table absent in this build */ }
     },
     save: async function () {
       var msgs = [];
@@ -446,16 +715,57 @@
 
   loaders.firmware = {
     load: async function () {
-      var keys = [["fwVersion", "release"], ["fwBuild", "status"], ["fwKernel", "dmesg"]];
-      for (var i = 0; i < keys.length; i++) {
-        try {
-          var d = await api("/x/info.cgi?" + keys[i][1]);
-          var raw = (d && (d.output_base64 || d.output || d.data)) || "";
-          var text = raw;
-          try { text = atob(raw); } catch (e) { /* not base64 */ }
-          if (typeof text === "string") $(keys[i][0]).textContent = text.trim().split("\n")[0].slice(0, 120) || "—";
-        } catch (e) { $(keys[i][0]).textContent = "unavailable"; }
+      try {
+        var release = await api("/x/info.cgi?release");
+        var os = {};
+        commandOutput(release, 0)
+          .split("\n")
+          .forEach(function (line) {
+            var m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+            if (!m) return;
+            try { os[m[1]] = JSON.parse(m[2]); } catch (e) { os[m[1]] = m[2]; }
+          });
+        $("fwVersion").textContent =
+          os.PRETTY_NAME || os.VERSION_ID || os.NAME || "not reported";
+        $("fwBuild").textContent =
+          os.BUILD_ID || os.VERSION_ID || "not reported by firmware";
+      } catch (e) {
+        $("fwVersion").textContent = "unavailable";
+        $("fwBuild").textContent = "unavailable";
       }
+      try {
+        var dmesg = await api("/x/info.cgi?dmesg");
+        var line = firstMatchLine(commandOutput(dmesg, 0), /Linux version/i);
+        $("fwKernel").textContent = line ? line.slice(0, 120) : "not reported";
+      } catch (e) {
+        $("fwKernel").textContent = "unavailable";
+      }
+      try {
+        var f = await flashMetadata();
+        var opts = (f.ota && f.ota.options) || [];
+        var sel = $("fwOtaMode");
+        if (sel) {
+          sel.innerHTML = "";
+          opts.forEach(function (o) {
+            var option = document.createElement("option");
+            option.value = o.id;
+            option.textContent = o.label || o.id;
+            option.title = o.description || "";
+            sel.appendChild(option);
+          });
+          sel.disabled = opts.length === 0;
+        }
+        var prepare = $("fwPrepareOta");
+        if (prepare) prepare.disabled = opts.length === 0;
+        if (f.ota && f.ota.notes) say("fwNote", f.ota.notes);
+      } catch (e) {
+        markUnavailable("fwNote", "Flash operations metadata");
+        var s = $("fwOtaMode"); if (s) s.disabled = true;
+        var b = $("fwPrepareOta"); if (b) b.disabled = true;
+      }
+    },
+    save: async function () {
+      return "Firmware has no editable settings here; use Flash operations to upgrade.";
     },
   };
 
@@ -463,14 +773,58 @@
     load: async function () {
       try {
         var d = await api("/x/tool-sdcard.cgi");
-        var card = d.card || d.device || d;
-        $("sdCard").textContent = card.model || card.name || card.device || "detected";
-        $("sdCapacity").textContent = card.size || card.capacity || (d.total ? d.total + " KB" : "—");
-        $("sdMount").textContent = card.mountpoint || d.mountpoint || "/mnt/mmcblk0p1";
-        $("sdStatus").textContent = d.mounted == null ? "see tools" : (bool(d.mounted) ? "Mounted" : "Not mounted");
+        var dev = d.device || null;
+        if (bool(d.has_sdcard) && dev) {
+          var label = [dev.vendor, dev.model]
+            .filter(function (x) { return !!x; })
+            .join(" ")
+            .trim();
+          $("sdCard").textContent = label || dev.name || dev.node || "SD card";
+          $("sdCapacity").textContent =
+            Number(dev.size_bytes) > 0
+              ? humanBytes(dev.size_bytes)
+              : "size not reported";
+          var mounts = b64text(d.reports && d.reports.mounts_b64)
+            .split("\n")
+            .filter(function (line) { return /^\/dev\/mmc/.test(line); });
+          var mount = mounts.length ? mounts[0].split(/\s+/)[1] : "";
+          $("sdMount").textContent =
+            mount || (dev.node ? dev.node + " (not mounted)" : "not mounted");
+          $("sdStatus").textContent = mount ? "Mounted" : "Detected, not mounted";
+          $("sdDevice").textContent = dev.node || "—";
+        } else {
+          $("sdCard").textContent = "No SD card detected";
+          $("sdCapacity").textContent = "—";
+          $("sdMount").textContent = "—";
+          $("sdStatus").textContent = "No card present";
+          $("sdDevice").textContent = "—";
+        }
       } catch (e) {
-        $("sdCard").textContent = "No SD card detected";
-        say("sdStatus", "SD card tool unavailable in this build.", true);
+        $("sdCard").textContent = "SD card tool unavailable";
+        $("sdCapacity").textContent = "—";
+        $("sdMount").textContent = "—";
+        $("sdStatus").textContent = "unavailable";
+        $("sdDevice").textContent = "—";
+      }
+      try {
+        var f = await flashMetadata();
+        var backup = f.backup || {};
+        var button = $("sdBackup");
+        if (button) {
+          button.disabled = !backup.download_url;
+          if (backup.download_url) {
+            say(
+              "backupNote",
+              "Archive: " + (backup.filename || "backup.tar.gz") +
+                " — contains Wi-Fi credentials and service accounts; store securely."
+            );
+          } else {
+            markUnavailable("backupNote", "Configuration backup");
+          }
+        }
+      } catch (e) {
+        var b = $("sdBackup"); if (b) b.disabled = true;
+        markUnavailable("backupNote", "Configuration backup");
       }
     },
   };
@@ -533,21 +887,30 @@
     btn.disabled = true;
     try {
       var msg = await loader.save();
-      var note = $("saveNote") || $("picNote") || $("syslogNote");
+      var note = $("saveNote") || $("picNote") || $("syslogNote") || $("netNote") || $("notifyNote");
       if (note) { note.textContent = msg; note.className = "okmsg"; }
       setTimeout(function () { if (note) note.textContent = ""; }, 5000);
     } catch (e) {
-      var n = $("saveNote") || $("picNote") || $("syslogNote");
+      var n = $("saveNote") || $("picNote") || $("syslogNote") || $("netNote") || $("notifyNote");
       if (n) { n.textContent = "Save failed: " + e.message; n.className = "err"; }
       else alert("Save failed: " + e.message);
     } finally { btn.disabled = false; }
   });
 
   $("netUseCurrent").addEventListener("click", function () {
-    var parts = location.hostname.split(".");
-    $("netRange").value = parts.length >= 4
-      ? parts.slice(0, 3).join(".") + ".0/24"
-      : "192.168.1.0/24";
+    var n = store.network || {};
+    var ifaces = (n.interfaces && [n.interfaces.eth0, n.interfaces.wlan0, n.interfaces.usb0]) || [];
+    var ip = "";
+    for (var i = 0; i < ifaces.length; i++) {
+      if (ifaces[i] && ifaces[i].address) { ip = ifaces[i].address; break; }
+    }
+    var m = ip.match(/^(\d+\.\d+\.\d+)\.\d+$/);
+    if (m) {
+      $("netRange").value = m[1] + ".0/24";
+      say("netNote", "");
+    } else {
+      say("netNote", "Camera has no IPv4 address yet; enter the allowed range manually.", true);
+    }
   });
 
   async function wgAction(action) {
@@ -563,6 +926,32 @@
   }
   $("wgGenPair").addEventListener("click", function () { wgAction("generate_keypair"); });
   $("wgGenPsk").addEventListener("click", function () { wgAction("generate_psk"); });
+
+  $("fwPrepareOta").addEventListener("click", async function () {
+    var sel = $("fwOtaMode");
+    if (!sel || !sel.value) {
+      say("fwNote", "No update option is exposed by this firmware build.", true);
+      return;
+    }
+    var label = sel.options[sel.selectedIndex].textContent;
+    if (!confirm("Prepare a " + label + " upgrade command? Nothing is flashed until you run it from Flash operations.")) return;
+    try {
+      var d = await api("/x/tool-upgrade.cgi", {
+        method: "POST",
+        form: true,
+        body: { action: "ota", option: sel.value },
+      });
+      $("fwOtaCommand").value = d.command || "No command returned by the camera.";
+      say("fwNote", "Command prepared. Flash operations runs it and reboots the camera; this panel does not flash.");
+    } catch (e) {
+      say("fwNote", "Could not prepare upgrade: " + e.message, true);
+    }
+  });
+
+  $("sdBackup").addEventListener("click", function () {
+    var backup = store.flash && store.flash.backup;
+    if (backup && backup.download_url) window.location.href = backup.download_url;
+  });
 
   $("factoryResetBtn").addEventListener("click", function () {
     // Preserve the stock page's destructive-action confirmation.

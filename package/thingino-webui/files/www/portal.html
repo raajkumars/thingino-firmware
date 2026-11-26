@@ -163,31 +163,49 @@
         </div>
       </div>
 
-      <!-- FIRMWARE / OTA — real version info only, no fake controls -->
+      <!-- FIRMWARE / OTA — real version + flash metadata; no auto-flash here -->
       <div class="tabpanel" id="tab-firmware">
         <div class="card">
           <h2>Firmware</h2>
           <table class="kv">
             <tr><td>Current version</td><td class="v" id="fwVersion">reading…</td></tr>
-            <tr><td>Build / branch</td><td class="v" id="fwBuild">reading…</td></tr>
+            <tr><td>Build ID</td><td class="v" id="fwBuild">reading…</td></tr>
             <tr><td>Kernel</td><td class="v" id="fwKernel">reading…</td></tr>
             <tr><td>Health handshake</td><td class="v"><span class="badge ok">on-device</span></td></tr>
           </table>
-          <div class="sect-note">This firmware exposes no automatic update or rollback CGI. Upgrade tools, when compiled in, live on the real <a href="/tool-upgrade.html">firmware tools page</a>.</div>
+          <div class="sect-note">Version strings are read from /x/info.cgi on this camera.</div>
+        </div>
+        <div class="card">
+          <h3>Over-the-air update</h3>
+          <div class="field"><label>Update scope</label><select id="fwOtaMode" disabled><option value="">reading…</option></select></div>
+          <div class="mini-actions">
+            <button class="pill-btn" id="fwPrepareOta" disabled>Prepare upgrade command</button>
+            <a class="pill-btn primary" href="/tool-upgrade.html">Open Flash operations</a>
+          </div>
+          <div class="status-line" id="fwNote">Reading update options from the camera…</div>
+          <div class="field" style="margin-top:10px;"><label>Command prepared on camera</label><input type="text" id="fwOtaCommand" readonly placeholder="No command prepared"></div>
+          <div class="sect-note">Preparing a command does not flash anything. Flash operations runs the upgrade and reboots the camera.</div>
         </div>
       </div>
 
-      <!-- STORAGE — real on-device SD info; no fake recorder toggles -->
+      <!-- STORAGE — real SD info + real config backup; no fake recorder toggles -->
       <div class="tabpanel" id="tab-storage">
         <div class="card">
           <h2>SD card &amp; recording</h2>
           <table class="kv">
             <tr><td>Card</td><td class="v" id="sdCard">checking…</td></tr>
+            <tr><td>Device</td><td class="v" id="sdDevice">—</td></tr>
             <tr><td>Capacity</td><td class="v" id="sdCapacity">—</td></tr>
             <tr><td>Mountpoint</td><td class="v" id="sdMount">—</td></tr>
             <tr><td>Status</td><td class="v" id="sdStatus">—</td></tr>
           </table>
           <div class="mini-actions"><a class="pill-btn" href="/tool-sdcard.html">Open SD card tools</a></div>
+        </div>
+        <div class="card">
+          <h3>Configuration backup</h3>
+          <div class="mini-actions"><button class="pill-btn primary" id="sdBackup" disabled>Download configuration</button></div>
+          <div class="status-line" id="backupNote">Checking the on-device backup endpoint…</div>
+          <div class="sect-note">The archive includes Wi-Fi credentials and service accounts. Store it securely; the firmware has no restore procedure.</div>
         </div>
         <div class="card">
           <h3>Recording</h3>
@@ -203,7 +221,7 @@
           <div class="caption">When to switch between color and infrared black-and-white.</div>
           <div class="seg" style="max-width:280px;" id="picNightSeg"><button class="active" data-value="auto">Auto</button><button data-value="day">Day</button><button data-value="night">Night</button></div>
           <div class="field" style="margin-top:14px;"><label>Switch sensitivity <span class="num" id="picThreshVal">40</span></label><input class="slider" id="picThreshold" type="range" min="0" max="100" value="40"></div>
-          <div class="field row-inline" style="margin-top:4px;"><label style="flex:1;margin:0;">Smooth transition at dusk/dawn<span class="hint" style="display:block;">Fades gradually instead of snapping, so motion alerts stay calm</span></label><label class="toggle"><input type="checkbox" id="picDusk"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field row-inline" style="margin-top:4px;"><label style="flex:1;margin:0;">Schedule by sunrise/sunset<span class="hint" style="display:block;">Switch modes automatically at local dusk and dawn using the camera's sun schedule</span></label><label class="toggle"><input type="checkbox" id="picDusk"><span class="track"></span><span class="thumb"></span></label></div>
         </div>
         <div class="grid2">
           <div class="card">
@@ -217,7 +235,7 @@
             <div class="field row-inline"><label style="flex:1;margin:0;">Blank the picture (privacy mode)</label><label class="toggle"><input type="checkbox" id="picPrivacy"><span class="track"></span><span class="thumb"></span></label></div>
           </div>
         </div>
-        <div class="sect-note" id="picNote">Values are read from the on-device day/night, GPIO and privacy config endpoints.</div>
+        <div class="sect-note" id="picNote">Values come from the on-device day/night, sun-schedule, GPIO and streamer endpoints.</div>
       </div>
 
       <!-- AUDIO — real speaker/mic config from send2 backend -->
@@ -228,7 +246,7 @@
             <div class="field"><label>Microphone</label><input class="slider" id="audioMic" type="range" min="0" max="100" value="70"></div>
             <div class="field"><label>Speaker</label><input class="slider" id="audioSpeaker" type="range" min="0" max="100" value="65"></div>
           </div>
-          <div class="sect-note">Microphone and speaker values come from the on-device notification/audio config. Some builds expose speaker volume only.</div>
+          <div class="sect-note" id="audioNote">Speaker volume comes from the on-device send2 config; microphone gain comes from the streamer agent when available.</div>
         </div>
       </div>
 
@@ -236,15 +254,17 @@
       <div class="tabpanel" id="tab-netaccess">
         <div class="card">
           <h2>Wi-Fi</h2>
-          <div class="field row-inline"><label style="flex:1;margin:0;">Wi-Fi enabled</label><label class="toggle"><input type="checkbox" id="netWifiEnabled"><span class="track"></span><span class="thumb"></span></label></div>
+          <div class="field row-inline"><label style="flex:1;margin:0;">Wi-Fi hotspot (AP mode)</label><label class="toggle"><input type="checkbox" id="netWifiEnabled"><span class="track"></span><span class="thumb"></span></label></div>
           <div class="field row-inline" style="margin-top:10px;"><label style="flex:1;margin:0;">Automatic IP (DHCP)</label><label class="toggle"><input type="checkbox" id="netDhcp"><span class="track"></span><span class="thumb"></span></label></div>
           <div class="field" style="margin-top:10px;"><label>Network</label><input type="text" id="netSsid" placeholder="Wi-Fi SSID"></div>
+          <div class="field"><label>Wi-Fi password</label><input type="password" id="netWifiPassword" placeholder="Leave blank to keep the saved password" autocomplete="new-password"></div>
           <table class="kv" style="margin-top:10px;">
             <tr><td>Hostname</td><td class="v" id="netHostname">—</td></tr>
             <tr><td>Status</td><td class="v" id="netStatus">—</td></tr>
             <tr><td>Local address</td><td class="v" id="netAddress">—</td></tr>
             <tr><td>Gateway</td><td class="v" id="netGateway">—</td></tr>
           </table>
+          <div class="status-line" id="netNote"></div>
         </div>
         <div class="grid2">
           <div class="card">
@@ -291,6 +311,8 @@
             <div class="field"><label>MQTT broker</label><input type="text" id="mqttHost" placeholder="192.168.1.10"></div>
             <div class="field"><label>MQTT topic</label><input type="text" id="mqttTopic" placeholder="thingino/events"></div>
           </div>
+          <div class="sect-note">The Home Assistant broker and entity list are set on the stock Home Assistant page.</div>
+          <div class="status-line" id="notifyNote"></div>
         </div>
       </div>
 
@@ -307,9 +329,10 @@
         <div class="card">
           <h3>Date &amp; time</h3>
           <div class="grid2">
-            <div class="field"><label>Timezone</label><select id="accountTz"><option value="">— current —</option></select></div>
+            <div class="field"><label>Timezone</label><input type="text" id="accountTz" list="accountTzList" placeholder="— current —" autocomplete="off"><datalist id="accountTzList"></datalist></div>
             <div class="field"><label>Time source (NTP)</label><input type="text" id="accountNtp" placeholder="pool.ntp.org"></div>
           </div>
+          <div class="status-line" id="accountNote">Timezone choices load from the camera's /a/tz.json table.</div>
         </div>
       </div>
 
