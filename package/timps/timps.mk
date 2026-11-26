@@ -826,14 +826,19 @@ endif
 # the preview page in general, not the /control API - so only gated on the
 # WebUI being present at all (nothing to override otherwise).
 ifeq ($(BR2_PACKAGE_THINGINO_WEBUI),y)
-# Flash operations (dev builds) would sysupgrade to a stock release without
-# timps, so the page and its CGI are dropped and S48 never enables the entry.
+# NOTE: this used to also rm -f tool-upgrade.html/.js/.cgi here, because
+# the "Full image" OTA button sysupgrades from the stock upstream
+# thingino-firmware GitHub release, which has no timps - silently
+# stripping out the custom streamer on a timps image. That is no longer
+# a reason to drop the page: the portal's Firmware/OTA tab wires the
+# same CGI unconditionally (thingino-webui.mk), so hiding it here only
+# broke that tab while leaving `sysupgrade -f` itself (root-shell
+# reachable regardless) just as risky as before. The CGI is auth-gated
+# like every other tool-*.cgi; the GitHub-sourced full-image risk is
+# inherent to sysupgrade and unrelated to whether this page exists.
 define TIMPS_INSTALL_WEBUI_CONFIG_FIX
 	$(INSTALL) -D -m 0755 $(TIMPS_PKGDIR)/files/S48webui-config \
 		$(TARGET_DIR)/etc/init.d/S48webui-config
-	rm -f $(TARGET_DIR)/var/www/tool-upgrade.html \
-		$(TARGET_DIR)/var/www/a/tool-upgrade.js \
-		$(TARGET_DIR)/var/www/x/tool-upgrade.cgi
 endef
 TIMPS_TARGET_FINALIZE_HOOKS += TIMPS_INSTALL_WEBUI_CONFIG_FIX
 
